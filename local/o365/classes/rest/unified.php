@@ -1424,6 +1424,68 @@ class unified extends o365api {
     }
 
     /**
+     * List items that have been shared with the current user.
+     *
+     * @param string $skiptoken Pagination token.
+     * @return array|null Returned response, or null if error.
+     * @throws moodle_exception
+     */
+    public function get_shared_with_me(string $skiptoken = ''): ?array {
+        $endpoint = '/me/drive/sharedWithMe';
+
+        $odataqueries = [];
+        if (empty($skiptoken) || !is_string($skiptoken)) {
+            $skiptoken = '';
+        }
+        if (!empty($skiptoken)) {
+            $odataqueries[] = '$skiptoken=' . $skiptoken;
+        }
+        if (!empty($odataqueries)) {
+            $endpoint .= '?' . implode('&', $odataqueries);
+        }
+
+        $response = $this->apicall('get', $endpoint);
+        $expectedparams = ['value' => null];
+        return $this->process_apicall_response($response, $expectedparams);
+    }
+
+    /**
+     * List the children for a shared item.
+     *
+     * @param string $driveid The drive id of the shared item.
+     * @param string $itemid The item id within the drive.
+     * @param string $skiptoken Pagination token.
+     * @return array|null Returned response, or null if error.
+     * @throws moodle_exception
+     */
+    public function get_shared_item_children(string $driveid, string $itemid, string $skiptoken = ''): ?array {
+        if (empty($driveid)) {
+            return null;
+        }
+
+        $drive = rawurlencode($driveid);
+        $endpoint = !empty($itemid)
+            ? "/drives/$drive/items/" . rawurlencode($itemid) . "/children"
+            : "/drives/$drive/root/children";
+
+        $odataqueries = [];
+        if (empty($skiptoken) || !is_string($skiptoken)) {
+            $skiptoken = '';
+        }
+        if (!empty($skiptoken)) {
+            $odataqueries[] = '$skiptoken=' . $skiptoken;
+        }
+        if (!empty($odataqueries)) {
+            $endpoint .= '?' . implode('&', $odataqueries);
+        }
+
+        $response = $this->apicall('get', $endpoint);
+        $expectedparams = ['value' => null];
+
+        return $this->process_apicall_response($response, $expectedparams);
+    }
+
+    /**
      * Get files from trendingAround api.
      *
      * @param string $upn user's userPrincipalName
@@ -1489,6 +1551,24 @@ class unified extends o365api {
     }
 
     /**
+     * Get metadata for an item in an arbitrary drive.
+     *
+     * @param string $driveid Target drive id.
+     * @param string $itemid Target item id.
+     * @return array|null The item metadata.
+     * @throws moodle_exception
+     */
+    public function get_drive_item_metadata(string $driveid, string $itemid): ?array {
+        if (empty($driveid) || empty($itemid)) {
+            return null;
+        }
+
+        $response = $this->apicall('get', "/drives/" . rawurlencode($driveid) . "/items/" . rawurlencode($itemid));
+        $expectedparams = ['id' => null];
+        return $this->process_apicall_response($response, $expectedparams);
+    }
+
+    /**
      * Get a file's content by its file id.
      *
      * @param string $fileid The file's ID.
@@ -1497,6 +1577,17 @@ class unified extends o365api {
      */
     public function get_file_by_id(string $fileid, string $o365userid): string {
         return $this->apicall('get', "/users/$o365userid/drive/items/$fileid/content");
+    }
+
+    /**
+     * Get a file's content by drive id and item id.
+     *
+     * @param string $driveid Target drive id.
+     * @param string $itemid Target item id.
+     * @return string The file content.
+     */
+    public function get_drive_file_by_id(string $driveid, string $itemid): string {
+        return $this->apicall('get', "/drives/" . rawurlencode($driveid) . "/items/" . rawurlencode($itemid) . "/content");
     }
 
     /**

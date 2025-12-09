@@ -134,12 +134,15 @@ class repository_office365 extends repository {
 
         $unifiedactive = false;
         $trendingactive = false;
+        $sharedwithmeactive = false;
         $trendingdisabled = get_config('office365', 'trendinggroup');
+        $sharedwithmedisabled = get_config('office365', 'sharedwithme');
         if ($this->unifiedconfigured === true) {
             $unifiedtoken = $this->get_unified_token();
             if (!empty($unifiedtoken)) {
                 $unifiedactive = true;
                 $trendingactive = (empty($trendingdisabled)) ? true : false;
+                $sharedwithmeactive = (empty($sharedwithmedisabled)) ? true : false;
             }
         }
 
@@ -159,6 +162,11 @@ class repository_office365 extends repository {
             if ($unifiedactive === true) {
                 // Path is in my files.
                 [$list, $breadcrumb] = $this->get_listing_my_unified(substr($path, 3));
+            }
+        } else if (strpos($path, '/shared/') === 0) {
+            if ($sharedwithmeactive === true) {
+                // Path is in shared-with-me files.
+                [$list, $breadcrumb] = $this->get_listing_shared_with_me(substr($path, 8));
             }
         } else if (strpos($path, '/groups/') === 0) {
             if ($showgroups === true) {
@@ -184,6 +192,14 @@ class repository_office365 extends repository {
                     'title' => get_string('groups', 'repository_office365'),
                     'path' => '/groups/',
                     'thumbnail' => $OUTPUT->pix_url('coursegroups', 'repository_office365')->out(false),
+                    'children' => [],
+                ];
+            }
+            if ($sharedwithmeactive === true) {
+                $list[] = [
+                    'title' => get_string('sharedwithme', 'repository_office365'),
+                    'path' => '/shared/',
+                    'thumbnail' => $OUTPUT->pix_url('onedrive', 'repository_office365')->out(false),
                     'children' => [],
                 ];
             }
@@ -593,6 +609,115 @@ class repository_office365 extends repository {
     }
 
     /**
+     * Get listing for items shared with the current user.
+     *
+     * @param string $path Folder path.
+     * @return array List of $list array and $path array.
+     */
+    protected function get_listing_shared_with_me($path = '') {
+        $path = (empty($path)) ? '/' : $path;
+
+        $list = [];
+        $unified = $this->get_unified_apiclient();
+
+        $breadcrumb = [
+            ['name' => $this->name, 'path' => '/'],
+            ['name' => get_string('sharedwithme', 'repository_office365'), 'path' => '/shared/'],
+        ];
+
+        if ($unified === false) {
+            return [$list, $breadcrumb];
+        }
+
+        if ($path === '/') {
+            try {
+                $filesresults = $unified->get_shared_with_me();
+                $contents = $filesresults['value'];
+                while (!empty($filesresults['@odata.nextLink'])) {
+                    $nextlink = parse_url($filesresults['@odata.nextLink']);
+                    $filesresults = [];
+                    if (isset($nextlink['query'])) {
+                        $query = [];
+                        parse_str($nextlink['query'], $query);
+                        if (isset($query['$skiptoken'])) {
+                            $filesresults = $unified->get_shared_with_me($query['$skiptoken']);
+                            $contents = array_merge($contents, $filesresults['value']);
+                        }
+                    }
+                }
+                $list = $this->contents_api_response_to_list($contents, '/shared', 'sharedwithme', null, false);
+            } catch (moodle_exception $e) {
+                $errmsg = 'Exception when retrieving shared-with-me files';
+                $debugdata = [
+                    'fullpath' => $path,
+                    'message' => $e->getMessage(),
+                ];
+                utils::debug($errmsg, __METHOD__, $debugdata);
+                return [$list, $breadcrumb];
+            }
+        } else {
+            $pathtrimmed = trim($path, '/');
+            $pathparts = explode('/', $pathtrimmed);
+            if (count($pathparts) < 2) {
+                utils::debug(get_string('errorbadpath', 'repository_office365'), __METHOD__, ['path' => $path]);
+                throw new moodle_exception('errorbadpath', 'repository_office365');
+            }
+
+            $driveid = $pathparts[0];
+            $itemid = $pathparts[1];
+
+            try {
+                $metadata = $unified->get_drive_item_metadata($driveid, $itemid);
+            } catch (moodle_exception $e) {
+                $errmsg = 'Exception when retrieving metadata for shared-with-me folder';
+                utils::debug($errmsg, __METHOD__, ['path' => $path, 'message' => $e->getMessage()]);
+                return [$list, $breadcrumb];
+            }
+
+            if (!empty($metadata['parentReference']['id']) && $metadata['parentReference']['id'] !== $itemid) {
+                $parentname = isset($metadata['parentReference']['name'])
+                    ? $metadata['parentReference']['name']
+                    : get_string('parentfolder', 'repository');
+                $breadcrumb[] = [
+                    'name' => $parentname,
+                    'path' => '/shared/' . $driveid . '/' . $metadata['parentReference']['id'],
+                ];
+            }
+            $currentname = isset($metadata['name']) ? $metadata['name'] : $itemid;
+            $breadcrumb[] = ['name' => $currentname, 'path' => '/shared/' . $driveid . '/' . $itemid];
+
+            try {
+                $filesresults = $unified->get_shared_item_children($driveid, $itemid);
+                $contents = $filesresults['value'];
+                while (!empty($filesresults['@odata.nextLink'])) {
+                    $nextlink = parse_url($filesresults['@odata.nextLink']);
+                    $filesresults = [];
+                    if (isset($nextlink['query'])) {
+                        $query = [];
+                        parse_str($nextlink['query'], $query);
+                        if (isset($query['$skiptoken'])) {
+                            $filesresults = $unified->get_shared_item_children($driveid, $itemid, $query['$skiptoken']);
+                            $contents = array_merge($contents, $filesresults['value']);
+                        }
+                    }
+                }
+
+                $list = $this->contents_api_response_to_list($contents, '/shared', 'sharedwithme', $driveid, false);
+            } catch (moodle_exception $e) {
+                $errmsg = 'Exception when retrieving shared-with-me child items';
+                $debugdata = [
+                    'fullpath' => $path,
+                    'message' => $e->getMessage(),
+                ];
+                utils::debug($errmsg, __METHOD__, $debugdata);
+                return [$list, $breadcrumb];
+            }
+        }
+
+        return [$list, $breadcrumb];
+    }
+
+    /**
      * Get listing for a trending files folder using the unified api.
      *
      * @param string $path Folder path.
@@ -661,6 +786,9 @@ class repository_office365 extends repository {
         } else if ($clienttype === 'unifiedgroup') {
             $pathprefix = '/groups'.$path;
             $uploadpathprefix = $pathprefix;
+        } else if ($clienttype === 'sharedwithme') {
+            $pathprefix = '/shared';
+            $uploadpathprefix = $pathprefix;
         } else if ($clienttype === 'trendingaround') {
             $pathprefix = '/my';
         }
@@ -718,6 +846,69 @@ class repository_office365 extends repository {
                             'size' => $content['size'],
                             'url' => $url,
                             'thumbnail' => $OUTPUT->pix_url(file_extension_icon($content['name'], 90))->out(false),
+                            'author' => $author,
+                            'source' => $this->pack_reference($source),
+                        ];
+                    }
+                } else if ($clienttype === 'sharedwithme') {
+                    $remoteitem = $content;
+                    if (isset($content['remoteItem'])) {
+                        $remoteitem = $content['remoteItem'];
+                    }
+                    if (empty($remoteitem['parentReference']['driveId']) || empty($remoteitem['id'])) {
+                        continue;
+                    }
+
+                    $driveid = $remoteitem['parentReference']['driveId'];
+                    $itemid = $remoteitem['id'];
+                    $itempath = $pathprefix . '/' . $driveid . '/' . $itemid;
+                    $created = isset($remoteitem['createdDateTime'])
+                        ? $remoteitem['createdDateTime']
+                        : (isset($content['createdDateTime']) ? $content['createdDateTime'] : null);
+                    $modified = isset($remoteitem['lastModifiedDateTime'])
+                        ? $remoteitem['lastModifiedDateTime']
+                        : (isset($content['lastModifiedDateTime']) ? $content['lastModifiedDateTime'] : null);
+
+                    if (isset($remoteitem['folder'])) {
+                        $list[] = [
+                            'title' => $remoteitem['name'],
+                            'path' => $itempath,
+                            'thumbnail' => $OUTPUT->pix_url(file_folder_icon(90))->out(false),
+                            'date' => !empty($created) ? strtotime($created) : null,
+                            'datemodified' => !empty($modified) ? strtotime($modified) : null,
+                            'datecreated' => !empty($created) ? strtotime($created) : null,
+                            'children' => [],
+                        ];
+                    } else if (isset($remoteitem['file'])) {
+                        $url = isset($remoteitem['webUrl']) ? $remoteitem['webUrl'] : '';
+                        if (!empty($url)) {
+                            $url .= (strpos($url, '?') === false) ? '?web=1' : '&web=1';
+                        }
+                        $source = [
+                            'id' => $itemid,
+                            'source' => 'sharedwithme',
+                            'driveid' => $driveid,
+                        ];
+
+                        $author = '';
+                        if (!empty($remoteitem['createdBy']['user']['displayName'])) {
+                            $author = $remoteitem['createdBy']['user']['displayName'];
+                            $author = explode(',', $author);
+                            $author = $author[0];
+                        } else if (!empty($content['createdBy']['user']['displayName'])) {
+                            $author = $content['createdBy']['user']['displayName'];
+                            $author = explode(',', $author);
+                            $author = $author[0];
+                        }
+
+                        $list[] = [
+                            'title' => $remoteitem['name'],
+                            'date' => !empty($created) ? strtotime($created) : null,
+                            'datemodified' => !empty($modified) ? strtotime($modified) : null,
+                            'datecreated' => !empty($created) ? strtotime($created) : null,
+                            'size' => isset($remoteitem['size']) ? $remoteitem['size'] : null,
+                            'url' => $url,
+                            'thumbnail' => $OUTPUT->pix_url(file_extension_icon($remoteitem['name'], 90))->out(false),
                             'author' => $author,
                             'source' => $this->pack_reference($source),
                         ];
@@ -862,6 +1053,15 @@ class repository_office365 extends repository {
                 throw new moodle_exception('errorwhiledownload', 'repository_office365');
             }
             $file = $sourceclient->get_group_file_by_id($reference['groupid'], $reference['id']);
+        } else if ($reference['source'] === 'sharedwithme') {
+            if ($this->unifiedconfigured === true) {
+                $sourceclient = $this->get_unified_apiclient();
+            }
+            if (empty($sourceclient) || empty($reference['driveid'])) {
+                utils::debug('Could not construct unified api client for shared items.', __METHOD__, $reference);
+                throw new moodle_exception('errorwhiledownload', 'repository_office365');
+            }
+            $file = $sourceclient->get_drive_file_by_id($reference['driveid'], $reference['id']);
         } else if ($reference['source'] === 'trendingaround') {
             if ($this->unifiedconfigured === true) {
                 $sourceclient = $this->get_unified_apiclient();
@@ -1077,6 +1277,16 @@ class repository_office365 extends repository {
                         if (isset($metadata['webUrl'])) {
                             $reference['url'] = $metadata['webUrl'];
                         }
+                    } else if ($filesource === 'sharedwithme') {
+                        if ($this->unifiedconfigured !== true) {
+                            utils::debug('Tried to access a shared-with-me file while the graph api is disabled.', __METHOD__);
+                            throw new moodle_exception('errorwhiledownload', 'repository_office365');
+                        }
+                        $sourceclient = $this->get_unified_apiclient();
+                        $metadata = $sourceclient->get_drive_item_metadata($sourceunpacked['driveid'], $fileid);
+                        if (isset($metadata['webUrl'])) {
+                            $reference['url'] = $metadata['webUrl'];
+                        }
                     }
                 } else {
                     // Default behavior (FILE_INTERNAL) - download the file.
@@ -1097,6 +1307,16 @@ class repository_office365 extends repository {
                         }
                         $sourceclient = $this->get_unified_apiclient();
                         $metadata = $sourceclient->get_group_file_metadata($sourceunpacked['groupid'], $fileid);
+                        if (isset($metadata['webUrl'])) {
+                            $reference['url'] = $metadata['webUrl'];
+                        }
+                    } else if ($filesource === 'sharedwithme') {
+                        if ($this->unifiedconfigured !== true) {
+                            utils::debug('Tried to access a shared-with-me file while the graph api is disabled.', __METHOD__);
+                            throw new moodle_exception('errorwhiledownload', 'repository_office365');
+                        }
+                        $sourceclient = $this->get_unified_apiclient();
+                        $metadata = $sourceclient->get_drive_item_metadata($sourceunpacked['driveid'], $fileid);
                         if (isset($metadata['webUrl'])) {
                             $reference['url'] = $metadata['webUrl'];
                         }
@@ -1385,6 +1605,8 @@ class repository_office365 extends repository {
         $mform->setType('onedrivegroup', PARAM_INT);
         $mform->addElement('checkbox', 'trendinggroup', get_string('trendinggroup', 'repository_office365'));
         $mform->setType('trendinggroup', PARAM_INT);
+        $mform->addElement('checkbox', 'sharedwithme', get_string('disablesharedwithme', 'repository_office365'));
+        $mform->setType('sharedwithme', PARAM_INT);
 
         // File linking options.
         $mform->addElement('header', 'filelinking', get_string('filelinkingheader', 'repository_office365'));
@@ -1419,11 +1641,19 @@ class repository_office365 extends repository {
     }
 
      /**
-      * Option names of office365.
-      *
-      * @return array
-      */
+     * Option names of office365.
+     *
+     * @return array
+     */
     public static function get_type_option_names() {
-        return ['coursegroup', 'onedrivegroup', 'trendinggroup', 'disabledirectlink', 'disableanonymousshare', 'pluginname'];
+        return [
+            'coursegroup',
+            'onedrivegroup',
+            'trendinggroup',
+            'sharedwithme',
+            'disabledirectlink',
+            'disableanonymousshare',
+            'pluginname',
+        ];
     }
 }
