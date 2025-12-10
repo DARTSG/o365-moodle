@@ -1464,12 +1464,12 @@ class unified extends o365api {
                 }
 
                 $resourceref = $insight['resourceReference'];
-                
+
                 // Parse the resource ID to extract drive and item IDs.
                 // Format is typically: drives/{drive-id}/items/{item-id} or {drive-id}!{item-id}.
                 $driveid = null;
                 $itemid = null;
-                
+
                 if (!empty($resourceref['id'])) {
                     // Try format: driveId!itemId.
                     if (strpos($resourceref['id'], '!') !== false) {
@@ -1509,7 +1509,7 @@ class unified extends o365api {
                 if (!empty($insight['resourceVisualization'])) {
                     $visualization = $insight['resourceVisualization'];
                     $remoteitem['name'] = $visualization['title'] ?? $remoteitem['name'];
-                    
+
                     // Determine if it's a file or folder based on type.
                     $type = !empty($visualization['type']) ? strtolower($visualization['type']) : '';
                     if (strpos($type, 'folder') !== false || $type === 'spsite' || $type === 'splist') {
@@ -1520,11 +1520,6 @@ class unified extends o365api {
                             $remoteitem['file']['mimeType'] = $visualization['mediaType'];
                         }
                     }
-                }
-
-                // Add size if available.
-                if (!empty($insight['resourceVisualization']['containerDisplayName'])) {
-                    $remoteitem['size'] = 0;
                 }
 
                 // Add timestamps from lastShared if available.
