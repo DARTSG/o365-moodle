@@ -49,6 +49,11 @@ class unified extends o365api {
     public $apiarea = 'graph';
 
     /**
+     * @var int Default page size for paginated API calls.
+     */
+    const DEFAULT_PAGE_SIZE = 200;
+
+    /**
      * Determine if the API client is configured.
      *
      * @return bool Whether the API client is configured.
@@ -1433,7 +1438,7 @@ class unified extends o365api {
     public function get_shared_with_me(string $skiptoken = ''): ?array {
         $endpoint = '/me/drive/sharedWithMe';
 
-        $odataqueries = ['$top=200'];
+        $odataqueries = ['$top=' . self::DEFAULT_PAGE_SIZE];
         if (empty($skiptoken) || !is_string($skiptoken)) {
             $skiptoken = '';
         }
@@ -1468,7 +1473,7 @@ class unified extends o365api {
             ? "/drives/$drive/items/" . rawurlencode($itemid) . "/children"
             : "/drives/$drive/root/children";
 
-        $odataqueries = ['$top=200'];
+        $odataqueries = ['$top=' . self::DEFAULT_PAGE_SIZE];
         if (empty($skiptoken) || !is_string($skiptoken)) {
             $skiptoken = '';
         }
