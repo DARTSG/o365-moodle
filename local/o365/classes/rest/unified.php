@@ -1433,7 +1433,7 @@ class unified extends o365api {
     public function get_shared_with_me(string $skiptoken = ''): ?array {
         $endpoint = '/me/drive/sharedWithMe';
 
-        $odataqueries = [];
+        $odataqueries = ['$top=200'];
         if (empty($skiptoken) || !is_string($skiptoken)) {
             $skiptoken = '';
         }
@@ -1468,7 +1468,7 @@ class unified extends o365api {
             ? "/drives/$drive/items/" . rawurlencode($itemid) . "/children"
             : "/drives/$drive/root/children";
 
-        $odataqueries = [];
+        $odataqueries = ['$top=200'];
         if (empty($skiptoken) || !is_string($skiptoken)) {
             $skiptoken = '';
         }
