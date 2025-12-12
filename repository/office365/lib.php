@@ -549,6 +549,8 @@ class repository_office365 extends repository {
      * @return array List of $list array and $path array.
      */
     protected function get_listing_teams($path = '') {
+        $path = (empty($path)) ? '/' : $path;
+
         global $OUTPUT, $USER;
 
         $list = [];
