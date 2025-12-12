@@ -89,6 +89,7 @@ $string['filelinkingheader'] = 'File linking options';
 $string['groups'] = 'Groups (Courses)';
 $string['myfiles'] = 'My OneDrive';
 $string['sharedwithme'] = 'Shared with me';
+$string['teams'] = 'Teams';
 $string['notconfigured'] = '<p class="error">To use this plugin, you must first configure the <a href="{$a}/admin/settings.php?section=local_o365">Microsoft 365 plugins</a></p>';
 $string['office365:view'] = 'View Microsoft 365 repository';
 $string['onedrivegroup'] = 'Disable My OneDrive folder in file picker';
@@ -101,4 +102,5 @@ $string['privacy:metadata'] = 'This plugin communicates with the Microsoft 365 O
 $string['trendingaround'] = 'Files Trending Around Me';
 $string['trendinggroup'] = 'Disable Files Trending Around Me folder in file picker';
 $string['disablesharedwithme'] = 'Disable Shared with me folder in file picker';
+$string['disableteams'] = 'Disable Teams folder in file picker';
 $string['upload'] = 'Upload New File';

@@ -135,14 +135,17 @@ class repository_office365 extends repository {
         $unifiedactive = false;
         $trendingactive = false;
         $sharedwithmeactive = false;
+        $teamsactive = false;
         $trendingdisabled = get_config('office365', 'trendinggroup');
         $sharedwithmedisabled = get_config('office365', 'sharedwithme');
+        $teamsdisabled = get_config('office365', 'teams');
         if ($this->unifiedconfigured === true) {
             $unifiedtoken = $this->get_unified_token();
             if (!empty($unifiedtoken)) {
                 $unifiedactive = true;
                 $trendingactive = (empty($trendingdisabled)) ? true : false;
                 $sharedwithmeactive = (empty($sharedwithmedisabled)) ? true : false;
+                $teamsactive = (empty($teamsdisabled)) ? true : false;
             }
         }
 
@@ -168,6 +171,11 @@ class repository_office365 extends repository {
                 // Path is in shared-with-me files.
                 [$list, $breadcrumb] = $this->get_listing_shared_with_me(substr($path, 8));
             }
+        } else if (strpos($path, '/teams/') === 0) {
+            if ($teamsactive === true) {
+                // Path is in teams files.
+                [$list, $breadcrumb] = $this->get_listing_teams(substr($path, 7));
+            }
         } else if (strpos($path, '/groups/') === 0) {
             if ($showgroups === true) {
                 // Path is in group files.
@@ -191,6 +199,14 @@ class repository_office365 extends repository {
                 $list[] = [
                     'title' => get_string('groups', 'repository_office365'),
                     'path' => '/groups/',
+                    'thumbnail' => $OUTPUT->pix_url('coursegroups', 'repository_office365')->out(false),
+                    'children' => [],
+                ];
+            }
+            if ($teamsactive === true) {
+                $list[] = [
+                    'title' => get_string('teams', 'repository_office365'),
+                    'path' => '/teams/',
                     'thumbnail' => $OUTPUT->pix_url('coursegroups', 'repository_office365')->out(false),
                     'children' => [],
                 ];
@@ -519,6 +535,127 @@ class repository_office365 extends repository {
                     }
                 } else {
                     utils::debug('Could not file group object record', __METHOD__, ['path' => $path]);
+                }
+            }
+        }
+
+        return [$list, $breadcrumb];
+    }
+
+    /**
+     * Get listing for Microsoft Teams files.
+     *
+     * @param string $path Folder path.
+     * @return array List of $list array and $path array.
+     */
+    protected function get_listing_teams($path = '') {
+        global $OUTPUT, $USER;
+
+        $list = [];
+        $breadcrumb = [
+            ['name' => $this->name, 'path' => '/'],
+            ['name' => get_string('teams', 'repository_office365'), 'path' => '/teams/'],
+        ];
+
+        $unified = $this->get_unified_apiclient();
+        if ($unified === false) {
+            return [$list, $breadcrumb];
+        }
+
+        if ($path === '/') {
+            // Show available teams.
+            try {
+                $o365userid = utils::get_o365_userid($USER->id);
+                $teams = $unified->get_user_teams($o365userid);
+
+                foreach ($teams as $team) {
+                    $list[] = [
+                        'title' => $team['displayName'] ?? $team['id'],
+                        'path' => '/teams/' . $team['id'],
+                        'thumbnail' => $OUTPUT->pix_url(file_folder_icon(90))->out(false),
+                        'children' => [],
+                    ];
+                }
+            } catch (moodle_exception $e) {
+                $errmsg = 'Exception when retrieving user teams';
+                $debugdata = [
+                    'message' => $e->getMessage(),
+                ];
+                utils::debug($errmsg, __METHOD__, $debugdata);
+            }
+        } else {
+            // Browse team files.
+            $pathtrimmed = trim($path, '/');
+            $pathparts = explode('/', $pathtrimmed);
+
+            if (empty($pathparts[0])) {
+                utils::debug(get_string('errorbadpath', 'repository_office365'), __METHOD__, ['path' => $path]);
+                throw new moodle_exception('errorbadpath', 'repository_office365');
+            }
+
+            $teamid = $pathparts[0];
+            $curpath = '/teams/' . $teamid;
+
+            // Get team name for breadcrumb.
+            try {
+                $team = $unified->get_group($teamid);
+                $breadcrumb[] = ['name' => $team['displayName'] ?? $teamid, 'path' => $curpath];
+            } catch (moodle_exception $e) {
+                $breadcrumb[] = ['name' => $teamid, 'path' => $curpath];
+            }
+
+            $intragrouppath = $pathparts;
+            unset($intragrouppath[0]);
+            $curparent = trim(end($intragrouppath));
+
+            if ($curparent === 'upload') {
+                $breadcrumb[] = ['name' => get_string('upload', 'repository_office365'), 'path' => $curpath . '/upload/'];
+            } else {
+                if (!empty($curparent)) {
+                    $metadata = $unified->get_group_file_metadata($teamid, $curparent);
+                    if (!empty($metadata['parentReference']) && !empty($metadata['parentReference']['path'])) {
+                        $parentrefpath = substr($metadata['parentReference']['path'],
+                            (strpos($metadata['parentReference']['path'], ':') + 1));
+                        $cache = cache::make('repository_office365', 'unifiedgroupfolderids');
+                        $cache->set($parentrefpath . '/' . $metadata['name'], $metadata['id']);
+                        if (!empty($parentrefpath)) {
+                            $parentrefpath = explode('/', trim($parentrefpath, '/'));
+                            $currentfullpath = '';
+                            foreach ($parentrefpath as $folder) {
+                                $currentfullpath .= '/' . $folder;
+                                $folderid = $cache->get($currentfullpath);
+                                $breadcrumb[] = ['name' => $folder, 'path' => $curpath . '/' . $folderid];
+                            }
+                        }
+                    }
+                    $breadcrumb[] = ['name' => $metadata['name'], 'path' => $curpath . '/' . $metadata['id']];
+                }
+
+                try {
+                    $filesresults = $unified->get_group_files($teamid, $curparent);
+                    $contents = $filesresults['value'];
+                    while (!empty($filesresults['@odata.nextLink'])) {
+                        $nextlink = parse_url($filesresults['@odata.nextLink']);
+                        $filesresults = [];
+                        if (isset($nextlink['query'])) {
+                            $query = [];
+                            parse_str($nextlink['query'], $query);
+                            if (isset($query['$skiptoken'])) {
+                                $filesresults = $unified->get_group_files($teamid, $curparent, $query['$skiptoken']);
+                                $contents = array_merge($contents, $filesresults['value']);
+                            }
+                        }
+                    }
+
+                    $list = $this->contents_api_response_to_list($contents, $path, 'unifiedgroup', $teamid, true);
+                } catch (moodle_exception $e) {
+                    $errmsg = 'Exception when retrieving team files';
+                    $debugdata = [
+                        'fullpath' => $path,
+                        'message' => $e->getMessage(),
+                        'teamid' => $teamid,
+                    ];
+                    utils::debug($errmsg, __METHOD__, $debugdata);
                 }
             }
         }
