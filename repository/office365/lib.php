@@ -207,7 +207,7 @@ class repository_office365 extends repository {
                 $list[] = [
                     'title' => get_string('teams', 'repository_office365'),
                     'path' => '/teams/',
-                    'thumbnail' => $OUTPUT->pix_url('coursegroups', 'repository_office365')->out(false),
+                    'thumbnail' => $OUTPUT->pix_url('sharepoint', 'repository_office365')->out(false),
                     'children' => [],
                 ];
             }
@@ -606,7 +606,8 @@ class repository_office365 extends repository {
 
             $intragrouppath = $pathparts;
             unset($intragrouppath[0]);
-            $curparent = trim(end($intragrouppath));
+            $lastpathpart = end($intragrouppath);
+            $curparent = trim($lastpathpart);
 
             if ($curparent === 'upload') {
                 $breadcrumb[] = ['name' => get_string('upload', 'repository_office365'), 'path' => $curpath . '/upload/'];
