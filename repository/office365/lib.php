@@ -232,7 +232,7 @@ class repository_office365 extends repository {
             return [
                 'dynload' => true,
                 'nologin' => true,
-                'nosearch' => true,
+                'nosearch' => false,
                 'path' => $breadcrumb,
                 'upload' => [
                     'label' => get_string('file', 'repository_office365'),
@@ -243,7 +243,7 @@ class repository_office365 extends repository {
         return [
             'dynload' => true,
             'nologin' => true,
-            'nosearch' => true,
+            'nosearch' => false,
             'list' => $list,
             'path' => $breadcrumb,
         ];
@@ -1706,6 +1706,66 @@ class repository_office365 extends repository {
         }
 
         redirect($fileurl);
+    }
+
+    /**
+     * Search for files and folders.
+     *
+     * @param string $searchtext Search query string.
+     * @param int $page Page number (not used, pagination handled via skiptoken).
+     * @return array Search results.
+     */
+    public function search($searchtext, $page = 0) {
+        global $OUTPUT;
+
+        if (empty($searchtext)) {
+            return [];
+        }
+
+        $list = [];
+        $unified = $this->get_unified_apiclient();
+
+        if ($unified === false) {
+            return [
+                'dynload' => true,
+                'nologin' => true,
+                'list' => $list,
+            ];
+        }
+
+        try {
+            $searchresults = $unified->search_files($searchtext);
+            $contents = $searchresults['value'] ?? [];
+
+            // Handle pagination for search results.
+            while (!empty($searchresults['@odata.nextLink'])) {
+                $nextlink = parse_url($searchresults['@odata.nextLink']);
+                $searchresults = [];
+                if (isset($nextlink['query'])) {
+                    $query = [];
+                    parse_str($nextlink['query'], $query);
+                    if (isset($query['$skiptoken'])) {
+                        $searchresults = $unified->search_files($searchtext, $query['$skiptoken']);
+                        $contents = array_merge($contents, $searchresults['value'] ?? []);
+                    }
+                }
+            }
+
+            // Convert search results to list format.
+            $list = $this->contents_api_response_to_list($contents, '', 'unified', null, false);
+
+        } catch (moodle_exception $e) {
+            utils::debug('Exception when searching files', __METHOD__, [
+                'query' => $searchtext,
+                'message' => $e->getMessage(),
+            ]);
+        }
+
+        return [
+            'dynload' => true,
+            'nologin' => true,
+            'list' => $list,
+        ];
     }
 
     /**

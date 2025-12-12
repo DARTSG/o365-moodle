@@ -2661,4 +2661,28 @@ class unified extends o365api {
 
         return $this->process_apicall_response($response, $expectedparams);
     }
+
+    /**
+     * Search for files and folders using Microsoft Graph search API.
+     *
+     * @param string $query Search query string.
+     * @param string $skiptoken Pagination token.
+     * @return array|null Returned response, or null if error.
+     * @throws moodle_exception
+     */
+    public function search_files(string $query, string $skiptoken = ''): ?array {
+        $endpoint = '/me/drive/search(q=\'' . rawurlencode($query) . '\')';
+
+        $odataqueries = ['$top=' . self::DEFAULT_PAGE_SIZE];
+        if (!empty($skiptoken)) {
+            $odataqueries[] = '$skiptoken=' . $skiptoken;
+        }
+        if (!empty($odataqueries)) {
+            $endpoint .= '?' . implode('&', $odataqueries);
+        }
+
+        $response = $this->apicall('get', $endpoint);
+        $expectedparams = ['value' => null];
+        return $this->process_apicall_response($response, $expectedparams);
+    }
 }
