@@ -1740,14 +1740,19 @@ class repository_office365 extends repository {
             // Handle pagination for search results.
             while (!empty($searchresults['@odata.nextLink'])) {
                 $nextlink = parse_url($searchresults['@odata.nextLink']);
-                $searchresults = [];
                 if (isset($nextlink['query'])) {
                     $query = [];
                     parse_str($nextlink['query'], $query);
                     if (isset($query['$skiptoken'])) {
                         $searchresults = $unified->search_files($searchtext, $query['$skiptoken']);
-                        $contents = array_merge($contents, $searchresults['value'] ?? []);
+                        if (!empty($searchresults['value'])) {
+                            $contents = array_merge($contents, $searchresults['value']);
+                        }
+                    } else {
+                        break;
                     }
+                } else {
+                    break;
                 }
             }
 

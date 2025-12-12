@@ -2671,15 +2671,15 @@ class unified extends o365api {
      * @throws moodle_exception
      */
     public function search_files(string $query, string $skiptoken = ''): ?array {
-        $endpoint = '/me/drive/search(q=\'' . rawurlencode($query) . '\')';
+        // Properly encode the query to prevent OData injection.
+        $encodedquery = rawurlencode($query);
+        $endpoint = "/me/drive/search(q='{$encodedquery}')";
 
         $odataqueries = ['$top=' . self::DEFAULT_PAGE_SIZE];
         if (!empty($skiptoken)) {
             $odataqueries[] = '$skiptoken=' . $skiptoken;
         }
-        if (!empty($odataqueries)) {
-            $endpoint .= '?' . implode('&', $odataqueries);
-        }
+        $endpoint .= '?' . implode('&', $odataqueries);
 
         $response = $this->apicall('get', $endpoint);
         $expectedparams = ['value' => null];
