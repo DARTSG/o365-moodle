@@ -650,7 +650,7 @@ class repository_office365 extends repository {
                         }
                     }
 
-                    $list = $this->contents_api_response_to_list($contents, $path, 'unifiedgroup', $teamid, true);
+                    $list = $this->contents_api_response_to_list($contents, $path, 'teams', $teamid, true);
                 } catch (moodle_exception $e) {
                     $errmsg = 'Exception when retrieving team files';
                     $debugdata = [
@@ -908,9 +908,10 @@ class repository_office365 extends repository {
      *
      * @param string $response The response from the API.
      * @param string $path The list path.
-     * @param string $clienttype The type of client that the response is from. onedrive/unified
+     * @param string $clienttype The type of client that the response is from. onedrive/unified/unifiedgroup/teams/sharedwithme/trendingaround
      * @param string $parentinfo Client type-specific parent information.
      *                               If using the unifiedgroup clienttype, this is the parent group ID.
+     *                               If using the teams clienttype, this is the team ID.
      * @param bool $addupload Whether to add the "Upload" file item.
      * @return array A $list array to be used by the respository class in get_listing.
      */
@@ -925,6 +926,9 @@ class repository_office365 extends repository {
             $uploadpathprefix = $pathprefix.$path;
         } else if ($clienttype === 'unifiedgroup') {
             $pathprefix = '/groups'.$path;
+            $uploadpathprefix = $pathprefix;
+        } else if ($clienttype === 'teams') {
+            $pathprefix = '/teams/'.$path;
             $uploadpathprefix = $pathprefix;
         } else if ($clienttype === 'sharedwithme') {
             $pathprefix = '/shared';
@@ -944,7 +948,7 @@ class repository_office365 extends repository {
 
         if (isset($response)) {
             foreach ($response as $content) {
-                if ($clienttype === 'unified' || $clienttype === 'unifiedgroup') {
+                if ($clienttype === 'unified' || $clienttype === 'unifiedgroup' || $clienttype === 'teams') {
                     $itempath = $pathprefix . '/' . $content['id'];
                     if (isset($content['folder'])) {
                         $list[] = [
@@ -963,7 +967,7 @@ class repository_office365 extends repository {
                                 'id' => $content['id'],
                                 'source' => 'onedrive',
                             ];
-                        } else if ($clienttype === 'unifiedgroup') {
+                        } else if ($clienttype === 'unifiedgroup' || $clienttype === 'teams') {
                             $source = [
                                 'id' => $content['id'],
                                 'source' => 'onedrivegroup',
