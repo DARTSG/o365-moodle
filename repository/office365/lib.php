@@ -154,7 +154,7 @@ class repository_office365 extends repository {
         $sharedwithmedisabled = get_config('office365', 'sharedwithme');
         $teamsdisabled = get_config('office365', 'teams');
         $bookmarksdisabled = get_config('office365', 'bookmarks');
-        $bookmarksactive = (empty($bookmarksdisabled)) ? true : false;
+        $bookmarksactive = empty($bookmarksdisabled);
         if ($this->unifiedconfigured === true) {
             $unifiedtoken = $this->get_unified_token();
             if (!empty($unifiedtoken)) {
@@ -1918,7 +1918,7 @@ class repository_office365 extends repository {
      *
      * @return array Array of bookmarks with path, title, and type.
      */
-    protected function get_bookmarks() {
+    public function get_bookmarks() {
         global $USER;
         $bookmarks = get_user_preferences('repository_office365_bookmarks', '', $USER->id);
         if (empty($bookmarks)) {

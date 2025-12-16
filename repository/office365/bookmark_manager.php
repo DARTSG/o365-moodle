@@ -98,18 +98,18 @@ if (empty($bookmarks)) {
 }
 
 // Display recently visited paths.
-echo $OUTPUT->heading('Recently Visited Folders', 2);
+echo $OUTPUT->heading(get_string('recentfolders', 'repository_office365'), 2);
 $recent = get_user_preferences('repository_office365_recent', '', $USER->id);
 $recentpaths = empty($recent) ? [] : json_decode($recent, true);
 
 if (empty($recentpaths) || !is_array($recentpaths)) {
-    echo $OUTPUT->notification('No recent folders', 'info');
+    echo $OUTPUT->notification(get_string('norecentfolders', 'repository_office365'), 'info');
 } else {
     $table = new html_table();
     $table->head = [
         get_string('title'),
         get_string('path'),
-        'Last Visited',
+        get_string('lastvisited', 'repository_office365'),
         get_string('actions'),
     ];
     
@@ -124,7 +124,7 @@ if (empty($recentpaths) || !is_array($recentpaths)) {
         }
         
         if ($isbookmarked) {
-            $actionlink = html_writer::tag('span', 'Bookmarked', ['class' => 'badge badge-success']);
+            $actionlink = html_writer::tag('span', get_string('bookmarked', 'repository_office365'), ['class' => 'badge badge-success']);
         } else {
             $addurl = new moodle_url($PAGE->url, [
                 'action' => 'add',
