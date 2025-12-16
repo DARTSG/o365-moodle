@@ -908,9 +908,10 @@ class repository_office365 extends repository {
      *
      * @param string $response The response from the API.
      * @param string $path The list path.
-     * @param string $clienttype The type of client that the response is from. onedrive/unified
+     * @param string $clienttype The type of client that the response is from. onedrive/unified/unifiedgroup/teams/sharedwithme/trendingaround
      * @param string $parentinfo Client type-specific parent information.
      *                               If using the unifiedgroup clienttype, this is the parent group ID.
+     *                               If using the teams clienttype, this is the team ID.
      * @param bool $addupload Whether to add the "Upload" file item.
      * @return array A $list array to be used by the respository class in get_listing.
      */
