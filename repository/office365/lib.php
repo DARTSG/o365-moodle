@@ -928,7 +928,7 @@ class repository_office365 extends repository {
             $pathprefix = '/groups'.$path;
             $uploadpathprefix = $pathprefix;
         } else if ($clienttype === 'teams') {
-            $pathprefix = '/teams'.$path;
+            $pathprefix = '/teams/'.$path;
             $uploadpathprefix = $pathprefix;
         } else if ($clienttype === 'sharedwithme') {
             $pathprefix = '/shared';
