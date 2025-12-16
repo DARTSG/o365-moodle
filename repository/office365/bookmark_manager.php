@@ -179,7 +179,7 @@ echo html_writer::empty_tag('input', [
     'required' => 'required',
     'placeholder' => 'e.g., /my/01ABCDEF123456789, /teams/abc-123-def',
 ]);
-echo html_writer::tag('small', 'Navigate to the folder in the file picker and copy the path from the breadcrumb.', ['class' => 'form-text text-muted']);
+echo html_writer::tag('small', get_string('bookmarkpathhelp', 'repository_office365'), ['class' => 'form-text text-muted']);
 echo html_writer::end_div();
 
 echo html_writer::tag('button', get_string('addbookmark', 'repository_office365'), [

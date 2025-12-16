@@ -179,7 +179,7 @@ class repository_office365 extends repository {
 
         if (strpos($path, '/bookmarks/') === 0) {
             // Path is in bookmarks.
-            if ($bookmarksactive === true) {
+            if ($bookmarksactive) {
                 [$list, $breadcrumb] = $this->get_listing_bookmarks();
             }
         } else if (strpos($path, '/my/') === 0) {
@@ -209,7 +209,7 @@ class repository_office365 extends repository {
             }
         } else {
             // Show bookmarks if enabled and any exist.
-            if ($bookmarksactive === true) {
+            if ($bookmarksactive) {
                 $bookmarks = $this->get_bookmarks();
                 if (!empty($bookmarks)) {
                     $list[] = [

@@ -115,4 +115,5 @@ $string['bookmarked'] = 'Bookmarked';
 $string['recentfolders'] = 'Recently Visited Folders';
 $string['norecentfolders'] = 'No recent folders';
 $string['lastvisited'] = 'Last Visited';
+$string['bookmarkpathhelp'] = 'Navigate to the folder in the file picker and copy the path from the breadcrumb.';
 $string['disablebookmarks'] = 'Disable Bookmarks folder in file picker';
