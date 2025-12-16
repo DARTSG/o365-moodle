@@ -129,6 +129,19 @@ class repository_office365 extends repository {
             $SESSION->repository_office365['curpath'][$clientid] = $path;
         }
 
+        // Handle bookmark actions.
+        $bookmarkaction = optional_param('bookmarkaction', '', PARAM_ALPHA);
+        $bookmarkpath = optional_param('bookmarkpath', '', PARAM_RAW);
+        $bookmarktitle = optional_param('bookmarktitle', '', PARAM_TEXT);
+        
+        if (!empty($bookmarkaction) && !empty($bookmarkpath)) {
+            if ($bookmarkaction === 'add' && !empty($bookmarktitle)) {
+                $this->add_bookmark($bookmarkpath, $bookmarktitle);
+            } else if ($bookmarkaction === 'remove') {
+                $this->remove_bookmark($bookmarkpath);
+            }
+        }
+
         $list = [];
         $breadcrumb = [['name' => $this->name, 'path' => '/']];
 
@@ -136,9 +149,12 @@ class repository_office365 extends repository {
         $trendingactive = false;
         $sharedwithmeactive = false;
         $teamsactive = false;
+        $bookmarksactive = false;
         $trendingdisabled = get_config('office365', 'trendinggroup');
         $sharedwithmedisabled = get_config('office365', 'sharedwithme');
         $teamsdisabled = get_config('office365', 'teams');
+        $bookmarksdisabled = get_config('office365', 'bookmarks');
+        $bookmarksactive = (empty($bookmarksdisabled)) ? true : false;
         if ($this->unifiedconfigured === true) {
             $unifiedtoken = $this->get_unified_token();
             if (!empty($unifiedtoken)) {
@@ -161,7 +177,12 @@ class repository_office365 extends repository {
             }
         }
 
-        if (strpos($path, '/my/') === 0) {
+        if (strpos($path, '/bookmarks/') === 0) {
+            // Path is in bookmarks.
+            if ($bookmarksactive === true) {
+                [$list, $breadcrumb] = $this->get_listing_bookmarks();
+            }
+        } else if (strpos($path, '/my/') === 0) {
             if ($unifiedactive === true) {
                 // Path is in my files.
                 [$list, $breadcrumb] = $this->get_listing_my_unified(substr($path, 3));
@@ -187,6 +208,18 @@ class repository_office365 extends repository {
                 [$list, $breadcrumb] = $this->get_listing_trending_unified(substr($path, 9));
             }
         } else {
+            // Show bookmarks if enabled and any exist.
+            if ($bookmarksactive === true) {
+                $bookmarks = $this->get_bookmarks();
+                if (!empty($bookmarks)) {
+                    $list[] = [
+                        'title' => get_string('bookmarks', 'repository_office365'),
+                        'path' => '/bookmarks/',
+                        'thumbnail' => $OUTPUT->pix_url('i/bookmark')->out(false),
+                        'children' => [],
+                    ];
+                }
+            }
             if ($unifiedactive === true) {
                 $list[] = [
                     'title' => get_string('myfiles', 'repository_office365'),
@@ -632,6 +665,15 @@ class repository_office365 extends repository {
                         }
                     }
                     $breadcrumb[] = ['name' => $metadata['name'], 'path' => $curpath . '/' . $metadata['id']];
+                    // Track this folder visit.
+                    $teamname = '';
+                    try {
+                        $team = $unified->get_group($teamid);
+                        $teamname = $team['displayName'] ?? $teamid;
+                    } catch (moodle_exception $e) {
+                        $teamname = $teamid;
+                    }
+                    $this->track_recent_path($curpath . '/' . $metadata['id'], $teamname . ' / ' . $metadata['name']);
                 }
 
                 try {
@@ -738,6 +780,8 @@ class repository_office365 extends repository {
                 }
             }
             $breadcrumb[] = ['name' => $metadata['name'], 'path' => '/my/'.$metadata['id']];
+            // Track this folder visit.
+            $this->track_recent_path('/my/'.$metadata['id'], $metadata['name']);
         }
 
         if ($this->path_is_upload($path) === true) {
@@ -1816,6 +1860,8 @@ class repository_office365 extends repository {
         $mform->setType('trendinggroup', PARAM_INT);
         $mform->addElement('checkbox', 'sharedwithme', get_string('disablesharedwithme', 'repository_office365'));
         $mform->setType('sharedwithme', PARAM_INT);
+        $mform->addElement('checkbox', 'bookmarks', get_string('disablebookmarks', 'repository_office365'));
+        $mform->setType('bookmarks', PARAM_INT);
 
         // File linking options.
         $mform->addElement('header', 'filelinking', get_string('filelinkingheader', 'repository_office365'));
@@ -1860,9 +1906,174 @@ class repository_office365 extends repository {
             'onedrivegroup',
             'trendinggroup',
             'sharedwithme',
+            'bookmarks',
             'disabledirectlink',
             'disableanonymousshare',
             'pluginname',
         ];
+    }
+
+    /**
+     * Get user's bookmarks.
+     *
+     * @return array Array of bookmarks with path, title, and type.
+     */
+    protected function get_bookmarks() {
+        global $USER;
+        $bookmarks = get_user_preferences('repository_office365_bookmarks', '', $USER->id);
+        if (empty($bookmarks)) {
+            return [];
+        }
+        return json_decode($bookmarks, true) ?: [];
+    }
+
+    /**
+     * Save user's bookmarks.
+     *
+     * @param array $bookmarks Array of bookmarks.
+     * @return bool Success status.
+     */
+    protected function save_bookmarks($bookmarks) {
+        global $USER;
+        $json = json_encode($bookmarks);
+        return set_user_preference('repository_office365_bookmarks', $json, $USER->id);
+    }
+
+    /**
+     * Add a bookmark for the current path.
+     *
+     * @param string $path The path to bookmark.
+     * @param string $title The display title for the bookmark.
+     * @return bool Success status.
+     */
+    public function add_bookmark($path, $title) {
+        $bookmarks = $this->get_bookmarks();
+        
+        // Check if bookmark already exists.
+        foreach ($bookmarks as $bookmark) {
+            if ($bookmark['path'] === $path) {
+                return true; // Already bookmarked.
+            }
+        }
+        
+        // Add new bookmark.
+        $bookmarks[] = [
+            'path' => $path,
+            'title' => $title,
+            'timestamp' => time(),
+        ];
+        
+        return $this->save_bookmarks($bookmarks);
+    }
+
+    /**
+     * Remove a bookmark.
+     *
+     * @param string $path The path of the bookmark to remove.
+     * @return bool Success status.
+     */
+    public function remove_bookmark($path) {
+        $bookmarks = $this->get_bookmarks();
+        $newbookmarks = [];
+        
+        foreach ($bookmarks as $bookmark) {
+            if ($bookmark['path'] !== $path) {
+                $newbookmarks[] = $bookmark;
+            }
+        }
+        
+        return $this->save_bookmarks($newbookmarks);
+    }
+
+    /**
+     * Check if a path is bookmarked.
+     *
+     * @param string $path The path to check.
+     * @return bool True if bookmarked, false otherwise.
+     */
+    protected function is_bookmarked($path) {
+        $bookmarks = $this->get_bookmarks();
+        foreach ($bookmarks as $bookmark) {
+            if ($bookmark['path'] === $path) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Track recently visited path.
+     *
+     * @param string $path The path that was visited.
+     * @param string $title The display title for the path.
+     */
+    protected function track_recent_path($path, $title) {
+        global $USER;
+        
+        // Don't track special paths.
+        if ($path === '/' || strpos($path, '/upload/') !== false || strpos($path, '/bookmarks/') !== false) {
+            return;
+        }
+        
+        $recent = get_user_preferences('repository_office365_recent', '', $USER->id);
+        $recentpaths = empty($recent) ? [] : json_decode($recent, true);
+        if (!is_array($recentpaths)) {
+            $recentpaths = [];
+        }
+        
+        // Remove if already exists (to update timestamp).
+        $recentpaths = array_filter($recentpaths, function($item) use ($path) {
+            return $item['path'] !== $path;
+        });
+        
+        // Add to front.
+        array_unshift($recentpaths, [
+            'path' => $path,
+            'title' => $title,
+            'timestamp' => time(),
+        ]);
+        
+        // Keep only last 20.
+        $recentpaths = array_slice($recentpaths, 0, 20);
+        
+        set_user_preference('repository_office365_recent', json_encode($recentpaths), $USER->id);
+    }
+
+    /**
+     * Get listing for bookmarked folders.
+     *
+     * @return array List of $list array and $breadcrumb array.
+     */
+    protected function get_listing_bookmarks() {
+        global $OUTPUT;
+        
+        $list = [];
+        $breadcrumb = [
+            ['name' => $this->name, 'path' => '/'],
+            ['name' => get_string('bookmarks', 'repository_office365'), 'path' => '/bookmarks/'],
+        ];
+        
+        $bookmarks = $this->get_bookmarks();
+        
+        if (empty($bookmarks)) {
+            // No bookmarks, return empty list.
+            return [$list, $breadcrumb];
+        }
+        
+        // Sort bookmarks by timestamp (most recent first).
+        usort($bookmarks, function($a, $b) {
+            return $b['timestamp'] - $a['timestamp'];
+        });
+        
+        foreach ($bookmarks as $bookmark) {
+            $list[] = [
+                'title' => $bookmark['title'],
+                'path' => $bookmark['path'],
+                'thumbnail' => $OUTPUT->pix_url(file_folder_icon(90))->out(false),
+                'children' => [],
+            ];
+        }
+        
+        return [$list, $breadcrumb];
     }
 }
