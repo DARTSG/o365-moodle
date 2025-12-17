@@ -215,7 +215,7 @@ class repository_office365 extends repository {
                     $list[] = [
                         'title' => get_string('bookmarks', 'repository_office365'),
                         'path' => '/bookmarks/',
-                        'thumbnail' => $OUTPUT->pix_url('i/bookmark')->out(false),
+                        'thumbnail' => $OUTPUT->pix_url('bookmark', 'repository_office365')->out(false),
                         'children' => [],
                     ];
                 }
