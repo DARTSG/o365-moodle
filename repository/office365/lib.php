@@ -183,11 +183,37 @@ class repository_office365 extends repository {
                 $pathparts = explode('/', trim($path, '/'));
                 if (count($pathparts) >= 3) {
                     $action = $pathparts[1]; // 'add' or 'remove'
-                    $targetpath = base64_decode($pathparts[2]);
                     
-                    if ($action === 'add' && isset($pathparts[3])) {
-                        $title = base64_decode($pathparts[3]);
-                        $this->add_bookmark($targetpath, $title);
+                    // Validate action parameter.
+                    if ($action !== 'add' && $action !== 'remove') {
+                        // Invalid action, skip processing.
+                        return [
+                            'dynload' => true,
+                            'nologin' => true,
+                            'nosearch' => false,
+                            'list' => [],
+                            'path' => $breadcrumb,
+                        ];
+                    }
+                    
+                    // Decode and validate target path.
+                    $targetpath = base64_decode($pathparts[2], true);
+                    if ($targetpath === false || empty($targetpath)) {
+                        // Invalid path, skip processing.
+                        return [
+                            'dynload' => true,
+                            'nologin' => true,
+                            'nosearch' => false,
+                            'list' => [],
+                            'path' => $breadcrumb,
+                        ];
+                    }
+                    
+                    if ($action === 'add' && count($pathparts) >= 4) {
+                        $title = base64_decode($pathparts[3], true);
+                        if ($title !== false && !empty($title)) {
+                            $this->add_bookmark($targetpath, $title);
+                        }
                     } else if ($action === 'remove') {
                         $this->remove_bookmark($targetpath);
                     }
