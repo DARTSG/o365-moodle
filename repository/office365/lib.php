@@ -177,7 +177,26 @@ class repository_office365 extends repository {
             }
         }
 
-        if (strpos($path, '/bookmarks/') === 0) {
+        if (strpos($path, '/bookmark-action/') === 0) {
+            // Handle bookmark action and redirect to original path.
+            if ($bookmarksactive) {
+                $pathparts = explode('/', trim($path, '/'));
+                if (count($pathparts) >= 3) {
+                    $action = $pathparts[1]; // 'add' or 'remove'
+                    $targetpath = base64_decode($pathparts[2]);
+                    
+                    if ($action === 'add' && isset($pathparts[3])) {
+                        $title = base64_decode($pathparts[3]);
+                        $this->add_bookmark($targetpath, $title);
+                    } else if ($action === 'remove') {
+                        $this->remove_bookmark($targetpath);
+                    }
+                    
+                    // Redirect back to the folder by recursively calling get_listing with the original path.
+                    return $this->get_listing($targetpath, $page);
+                }
+            }
+        } else if (strpos($path, '/bookmarks/') === 0) {
             // Path is in bookmarks.
             if ($bookmarksactive) {
                 [$list, $breadcrumb] = $this->get_listing_bookmarks();
@@ -556,6 +575,11 @@ class repository_office365 extends repository {
                             }
 
                             $list = $this->contents_api_response_to_list($contents, $path, 'unifiedgroup', $group->objectid, true);
+                            
+                            // Add bookmark actions for group subfolders.
+                            if (!empty($curparent)) {
+                                $list = $this->add_bookmark_actions_to_list($list, $curpath.$metadata['id'], $metadata['name']);
+                            }
                         } catch (moodle_exception $e) {
                             $errmsg = 'Exception when retrieving share point files for group';
                             $debugdata = [
@@ -693,6 +717,19 @@ class repository_office365 extends repository {
                     }
 
                     $list = $this->contents_api_response_to_list($contents, $path, 'teams', $teamid, true);
+                    
+                    // Add bookmark actions for team subfolders.
+                    if (!empty($curparent)) {
+                        $teamname = '';
+                        try {
+                            $team = $unified->get_group($teamid);
+                            $teamname = $team['displayName'] ?? $teamid;
+                        } catch (moodle_exception $e) {
+                            $teamname = $teamid;
+                        }
+                        $list = $this->add_bookmark_actions_to_list($list, $curpath . '/' . $metadata['id'], 
+                                                                     $teamname . ' / ' . $metadata['name']);
+                    }
                 } catch (moodle_exception $e) {
                     $errmsg = 'Exception when retrieving team files';
                     $debugdata = [
@@ -787,6 +824,9 @@ class repository_office365 extends repository {
         if ($this->path_is_upload($path) === true) {
             $breadcrumb[] = ['name' => get_string('upload', 'repository_office365'),
                 'path' => '/my/' . $metadata['id'] . '/upload/'];
+        } else if ($realpath !== '/') {
+            // Add bookmark actions for non-root folders.
+            $list = $this->add_bookmark_actions_to_list($list, '/my/'.$metadata['id'], $metadata['name']);
         }
 
         return [$list, $breadcrumb];
@@ -887,6 +927,9 @@ class repository_office365 extends repository {
                 }
 
                 $list = $this->contents_api_response_to_list($contents, '/shared', 'sharedwithme', $driveid, false);
+                
+                // Add bookmark actions for shared folders.
+                $list = $this->add_bookmark_actions_to_list($list, '/shared/' . $driveid . '/' . $itemid, $currentname);
             } catch (moodle_exception $e) {
                 $errmsg = 'Exception when retrieving shared-with-me child items';
                 $debugdata = [
@@ -1911,6 +1954,63 @@ class repository_office365 extends repository {
             'disableanonymousshare',
             'pluginname',
         ];
+    }
+
+    /**
+     * Add bookmark action items to a folder listing.
+     *
+     * @param array $list The current list of items.
+     * @param string $currentpath The current folder path.
+     * @param string $foldertitle The title of the current folder.
+     * @return array The list with bookmark action items added.
+     */
+    protected function add_bookmark_actions_to_list($list, $currentpath, $foldertitle) {
+        global $OUTPUT;
+        
+        // Don't add bookmark actions for special paths.
+        if (empty($currentpath) || $currentpath === '/' || 
+            strpos($currentpath, '/upload/') !== false || 
+            strpos($currentpath, '/bookmarks/') !== false ||
+            strpos($currentpath, '/bookmark-action/') !== false) {
+            return $list;
+        }
+        
+        $bookmarksdisabled = get_config('office365', 'bookmarks');
+        if (!empty($bookmarksdisabled)) {
+            return $list;
+        }
+        
+        $isbookmarked = $this->is_bookmarked($currentpath);
+        
+        // Create bookmark action item that uses special paths.
+        if ($isbookmarked) {
+            // Add "Remove bookmark" action using special path.
+            $actionitem = [
+                'title' => '★ ' . get_string('removebookmark', 'repository_office365'),
+                'path' => '/bookmark-action/remove/' . base64_encode($currentpath),
+                'thumbnail' => $OUTPUT->pix_url('i/star')->out(false),
+                'children' => [],
+            ];
+        } else {
+            // Add "Bookmark this folder" action using special path.
+            $actionitem = [
+                'title' => '☆ ' . get_string('addbookmark', 'repository_office365'),
+                'path' => '/bookmark-action/add/' . base64_encode($currentpath) . '/' . base64_encode($foldertitle),
+                'thumbnail' => $OUTPUT->pix_url('i/star-o')->out(false),
+                'children' => [],
+            ];
+        }
+        
+        // Insert at the beginning of the list (after upload if present).
+        if (!empty($list) && isset($list[0]['path']) && strpos($list[0]['path'], '/upload/') !== false) {
+            // Insert after upload item.
+            array_splice($list, 1, 0, [$actionitem]);
+        } else {
+            // Insert at the beginning.
+            array_unshift($list, $actionitem);
+        }
+        
+        return $list;
     }
 
     /**

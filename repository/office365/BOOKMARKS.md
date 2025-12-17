@@ -32,7 +32,16 @@ When bookmarks are enabled and you have saved bookmarks:
 
 ### Managing Bookmarks
 
-#### Method 1: Using the Bookmark Manager (Recommended)
+#### Method 1: In-Picker Bookmark Actions (Easiest)
+
+When you navigate to any folder in the Microsoft 365 file picker, you'll see a bookmark action item at the top of the folder contents:
+
+- **☆ Add to Bookmarks**: Click this to bookmark the current folder
+- **★ Remove from Bookmarks**: Click this to remove the current folder from bookmarks (appears when folder is already bookmarked)
+
+This is the quickest way to bookmark folders as you browse!
+
+#### Method 2: Using the Bookmark Manager
 
 1. Navigate to `/repository/office365/bookmark_manager.php` in your Moodle installation
 2. The page shows two sections:
@@ -45,7 +54,7 @@ When bookmarks are enabled and you have saved bookmarks:
 3. In the "Recently Visited Folders" section, find the folder you want to bookmark
 4. Click "Add to Bookmarks" next to that folder
 
-#### Adding a Bookmark Manually:
+#### Adding a Bookmark Manually (Advanced):
 1. Navigate to the folder in the file picker
 2. Note the folder's path (e.g., `/my/01ABCDEF123456789` or `/teams/abc-123-def/456xyz`)
 3. Visit the Bookmark Manager page
