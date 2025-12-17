@@ -107,7 +107,7 @@ if (empty($recentpaths) || !is_array($recentpaths)) {
 } else {
     $table = new html_table();
     $table->head = [
-        get_string('title'),
+        get_string('folder', 'repository_office365'),
         get_string('path'),
         get_string('lastvisited', 'repository_office365'),
         get_string('actions'),
@@ -158,7 +158,7 @@ echo html_writer::empty_tag('input', ['type' => 'hidden', 'name' => 'sesskey', '
 echo html_writer::empty_tag('input', ['type' => 'hidden', 'name' => 'action', 'value' => 'add']);
 
 echo html_writer::start_div('form-group');
-echo html_writer::label(get_string('title'), 'title');
+echo html_writer::label(get_string('name', 'repository_office365'), 'title');
 echo html_writer::empty_tag('input', [
     'type' => 'text',
     'name' => 'title',
