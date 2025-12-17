@@ -25,6 +25,7 @@
  */
 
 require_once(__DIR__ . '/../../config.php');
+require_once($CFG->dirroot . '/repository/lib.php');
 require_once($CFG->libdir . '/tablelib.php');
 
 require_login();
