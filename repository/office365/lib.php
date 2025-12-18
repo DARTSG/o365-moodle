@@ -2020,6 +2020,33 @@ class repository_office365 extends repository {
     }
 
     /**
+     * Check if an item is a folder (not a file or special item).
+     *
+     * @param array $item The item to check.
+     * @return bool True if the item is a folder.
+     */
+    protected function is_folder_item($item) {
+        // Folders have 'path' and 'children', but no 'url' (files have url).
+        return isset($item['path']) && !isset($item['url']) && isset($item['children']);
+    }
+
+    /**
+     * Check if a path is a special path that should not have bookmark actions.
+     *
+     * @param string $path The path to check.
+     * @return bool True if the path is special.
+     */
+    protected function is_special_path($path) {
+        $specialpaths = ['/upload/', '/bookmarks/', '/bookmark-action/'];
+        foreach ($specialpaths as $specialpath) {
+            if (strpos($path, $specialpath) !== false) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * Add bookmark actions for individual folders in a listing.
      * This adds a bookmark action after each folder item.
      *
@@ -2029,6 +2056,7 @@ class repository_office365 extends repository {
     protected function add_individual_folder_bookmark_actions($list) {
         global $OUTPUT;
         
+        // Check if bookmarks are disabled.
         $bookmarksdisabled = get_config('office365', 'bookmarks');
         if (!empty($bookmarksdisabled)) {
             return $list;
@@ -2039,15 +2067,8 @@ class repository_office365 extends repository {
             // Add the original item.
             $newlist[] = $item;
             
-            // Check if this is a folder (has 'path' but no 'url' - folders have children, files have url).
-            if (isset($item['path']) && !isset($item['url']) && isset($item['children'])) {
-                // Skip special items like upload or bookmark actions.
-                if (strpos($item['path'], '/upload/') !== false || 
-                    strpos($item['path'], '/bookmarks/') !== false ||
-                    strpos($item['path'], '/bookmark-action/') !== false) {
-                    continue;
-                }
-                
+            // Check if this is a folder and not a special path.
+            if ($this->is_folder_item($item) && !$this->is_special_path($item['path'])) {
                 $folderpath = $item['path'];
                 $foldertitle = $item['title'];
                 $isbookmarked = $this->is_bookmarked($folderpath);
