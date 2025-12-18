@@ -601,11 +601,6 @@ class repository_office365 extends repository {
                             }
 
                             $list = $this->contents_api_response_to_list($contents, $path, 'unifiedgroup', $group->objectid, true);
-                            
-                            // Add bookmark actions for group subfolders.
-                            if (!empty($curparent)) {
-                                $list = $this->add_bookmark_actions_to_list($list, $curpath.$metadata['id'], $metadata['name']);
-                            }
                         } catch (moodle_exception $e) {
                             $errmsg = 'Exception when retrieving share point files for group';
                             $debugdata = [
@@ -743,19 +738,6 @@ class repository_office365 extends repository {
                     }
 
                     $list = $this->contents_api_response_to_list($contents, $path, 'teams', $teamid, true);
-                    
-                    // Add bookmark actions for team subfolders.
-                    if (!empty($curparent)) {
-                        $teamname = '';
-                        try {
-                            $team = $unified->get_group($teamid);
-                            $teamname = $team['displayName'] ?? $teamid;
-                        } catch (moodle_exception $e) {
-                            $teamname = $teamid;
-                        }
-                        $list = $this->add_bookmark_actions_to_list($list, $curpath . '/' . $metadata['id'], 
-                                                                     $teamname . ' / ' . $metadata['name']);
-                    }
                 } catch (moodle_exception $e) {
                     $errmsg = 'Exception when retrieving team files';
                     $debugdata = [
@@ -850,9 +832,6 @@ class repository_office365 extends repository {
         if ($this->path_is_upload($path) === true) {
             $breadcrumb[] = ['name' => get_string('upload', 'repository_office365'),
                 'path' => '/my/' . $metadata['id'] . '/upload/'];
-        } else if ($realpath !== '/') {
-            // Add bookmark actions for non-root folders.
-            $list = $this->add_bookmark_actions_to_list($list, '/my/'.$metadata['id'], $metadata['name']);
         }
 
         return [$list, $breadcrumb];
@@ -953,9 +932,6 @@ class repository_office365 extends repository {
                 }
 
                 $list = $this->contents_api_response_to_list($contents, '/shared', 'sharedwithme', $driveid, false);
-                
-                // Add bookmark actions for shared folders.
-                $list = $this->add_bookmark_actions_to_list($list, '/shared/' . $driveid . '/' . $itemid, $currentname);
             } catch (moodle_exception $e) {
                 $errmsg = 'Exception when retrieving shared-with-me child items';
                 $debugdata = [
@@ -1239,6 +1215,9 @@ class repository_office365 extends repository {
                 }
             }
         }
+
+        // Add individual bookmark actions for each folder.
+        $list = $this->add_individual_folder_bookmark_actions($list);
 
         return $list;
     }
@@ -1984,6 +1963,7 @@ class repository_office365 extends repository {
 
     /**
      * Add bookmark action items to a folder listing.
+     * This adds bookmark actions for the current folder only.
      *
      * @param array $list The current list of items.
      * @param string $currentpath The current folder path.
@@ -2037,6 +2017,64 @@ class repository_office365 extends repository {
         }
         
         return $list;
+    }
+
+    /**
+     * Add bookmark actions for individual folders in a listing.
+     * This adds a bookmark action after each folder item.
+     *
+     * @param array $list The current list of items.
+     * @return array The list with individual folder bookmark actions added.
+     */
+    protected function add_individual_folder_bookmark_actions($list) {
+        global $OUTPUT;
+        
+        $bookmarksdisabled = get_config('office365', 'bookmarks');
+        if (!empty($bookmarksdisabled)) {
+            return $list;
+        }
+        
+        $newlist = [];
+        foreach ($list as $item) {
+            // Add the original item.
+            $newlist[] = $item;
+            
+            // Check if this is a folder (has 'path' but no 'url' - folders have children, files have url).
+            if (isset($item['path']) && !isset($item['url']) && isset($item['children'])) {
+                // Skip special items like upload or bookmark actions.
+                if (strpos($item['path'], '/upload/') !== false || 
+                    strpos($item['path'], '/bookmarks/') !== false ||
+                    strpos($item['path'], '/bookmark-action/') !== false) {
+                    continue;
+                }
+                
+                $folderpath = $item['path'];
+                $foldertitle = $item['title'];
+                $isbookmarked = $this->is_bookmarked($folderpath);
+                
+                // Create bookmark action for this specific folder.
+                if ($isbookmarked) {
+                    $actionitem = [
+                        'title' => '  ★ ' . get_string('bookmarked', 'repository_office365') . ': ' . $foldertitle,
+                        'path' => '/bookmark-action/remove/' . base64_encode($folderpath),
+                        'thumbnail' => $OUTPUT->pix_url('i/star')->out(false),
+                        'children' => [],
+                    ];
+                } else {
+                    $actionitem = [
+                        'title' => '  ☆ ' . get_string('addbookmark', 'repository_office365') . ': ' . $foldertitle,
+                        'path' => '/bookmark-action/add/' . base64_encode($folderpath) . '/' . base64_encode($foldertitle),
+                        'thumbnail' => $OUTPUT->pix_url('i/star-o')->out(false),
+                        'children' => [],
+                    ];
+                }
+                
+                // Add the bookmark action right after the folder.
+                $newlist[] = $actionitem;
+            }
+        }
+        
+        return $newlist;
     }
 
     /**
