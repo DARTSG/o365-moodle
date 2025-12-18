@@ -2076,7 +2076,7 @@ class repository_office365 extends repository {
                 // Create bookmark action for this specific folder.
                 if ($isbookmarked) {
                     $actionitem = [
-                        'title' => '  ★ ' . get_string('bookmarked', 'repository_office365') . ': ' . $foldertitle,
+                        'title' => '  ★ ' . get_string('removebookmark', 'repository_office365') . ': ' . $foldertitle,
                         'path' => '/bookmark-action/remove/' . base64_encode($folderpath),
                         'thumbnail' => $OUTPUT->pix_url('i/star')->out(false),
                         'children' => [],

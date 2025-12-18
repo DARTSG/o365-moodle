@@ -37,7 +37,7 @@ When bookmarks are enabled and you have saved bookmarks:
 When you browse folders in the Microsoft 365 file picker, you'll see bookmark action items right after each folder in the listing:
 
 - **☆ Add to Bookmarks: [Folder Name]**: Click this to bookmark that specific folder
-- **★ Bookmarked: [Folder Name]**: Indicates the folder is already bookmarked; click to remove it from bookmarks
+- **★ Remove from Bookmarks: [Folder Name]**: Click to remove the folder from bookmarks (appears when folder is already bookmarked)
 
 Each folder has its own bookmark action item positioned immediately after it in the listing, making it easy to bookmark multiple folders without navigating into each one. This is the quickest way to manage bookmarks as you browse!
 
