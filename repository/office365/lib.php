@@ -604,7 +604,7 @@ class repository_office365 extends repository {
                             
                             // Add bookmark actions for group subfolders.
                             if (!empty($curparent)) {
-                                $list = $this->add_bookmark_actions_to_list($list, $curpath.$metadata['id'], $metadata['name']);
+                                $list = $this->add_bookmark_actions_to_list($list, $curpath . $metadata['id'], $metadata['name']);
                             }
                         } catch (moodle_exception $e) {
                             $errmsg = 'Exception when retrieving share point files for group';
@@ -746,7 +746,7 @@ class repository_office365 extends repository {
                     
                     // Add bookmark actions for team subfolders.
                     if (!empty($curparent)) {
-                        $teamname = '';
+                        $teamname = $teamid;
                         try {
                             $team = $unified->get_group($teamid);
                             $teamname = $team['displayName'] ?? $teamid;
@@ -852,7 +852,7 @@ class repository_office365 extends repository {
                 'path' => '/my/' . $metadata['id'] . '/upload/'];
         } else if ($realpath !== '/') {
             // Add bookmark actions for non-root folders.
-            $list = $this->add_bookmark_actions_to_list($list, '/my/'.$metadata['id'], $metadata['name']);
+            $list = $this->add_bookmark_actions_to_list($list, '/my/' . $metadata['id'], $metadata['name']);
         }
 
         return [$list, $breadcrumb];
