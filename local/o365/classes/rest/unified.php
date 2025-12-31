@@ -49,6 +49,11 @@ class unified extends o365api {
     public $apiarea = 'graph';
 
     /**
+     * @var int Default page size for paginated API calls.
+     */
+    const DEFAULT_PAGE_SIZE = 200;
+
+    /**
      * Determine if the API client is configured.
      *
      * @return bool Whether the API client is configured.
@@ -1424,6 +1429,162 @@ class unified extends o365api {
     }
 
     /**
+     * List items that have been shared with the current user.
+     * Uses the insights API as the sharedWithMe endpoint is deprecated.
+     *
+     * @param string $skiptoken Pagination token.
+     * @return array|null Returned response, or null if error.
+     * @throws moodle_exception
+     */
+    public function get_shared_with_me(string $skiptoken = ''): ?array {
+        // Use the insights/shared endpoint as /me/drive/sharedWithMe is deprecated.
+        $endpoint = '/me/insights/shared';
+
+        $odataqueries = ['$top=' . self::DEFAULT_PAGE_SIZE];
+        if (empty($skiptoken) || !is_string($skiptoken)) {
+            $skiptoken = '';
+        }
+        if (!empty($skiptoken)) {
+            $odataqueries[] = '$skiptoken=' . $skiptoken;
+        }
+        if (!empty($odataqueries)) {
+            $endpoint .= '?' . implode('&', $odataqueries);
+        }
+
+        $response = $this->apicall('get', $endpoint);
+        $expectedparams = ['value' => null];
+        $result = $this->process_apicall_response($response, $expectedparams);
+
+        // Transform insights response to match the expected drive item structure.
+        if (!empty($result['value'])) {
+            $transformeditems = [];
+            foreach ($result['value'] as $insight) {
+                if (empty($insight['resourceReference'])) {
+                    continue;
+                }
+
+                $resourceref = $insight['resourceReference'];
+
+                // Parse the resource ID to extract drive and item IDs.
+                // Format is typically: drives/{drive-id}/items/{item-id} or {drive-id}!{item-id}.
+                $driveid = null;
+                $itemid = null;
+
+                if (!empty($resourceref['id'])) {
+                    // Try format: driveId!itemId.
+                    if (strpos($resourceref['id'], '!') !== false) {
+                        $parts = explode('!', $resourceref['id']);
+                        if (count($parts) === 2) {
+                            $driveid = $parts[0];
+                            $itemid = $parts[1];
+                        }
+                    } else if (preg_match('/drives\/([^\/]+)\/items\/(.+)$/', $resourceref['id'], $matches)) {
+                        // Try format: drives/{drive-id}/items/{item-id}.
+                        $driveid = $matches[1];
+                        $itemid = $matches[2];
+                    }
+                }
+
+                // Skip if we can't extract proper IDs - repository code requires both.
+                if (empty($itemid) || empty($driveid)) {
+                    continue;
+                }
+
+                // Build the item structure compatible with the repository code.
+                $item = [
+                    'id' => $resourceref['id'],
+                ];
+
+                // Build remoteItem structure.
+                $remoteitem = [
+                    'id' => $itemid,
+                    'name' => $resourceref['name'] ?? 'Unknown',
+                    'webUrl' => $resourceref['webUrl'] ?? null,
+                    'parentReference' => [
+                        'driveId' => $driveid,
+                    ],
+                ];
+
+                // Use resourceVisualization for additional details if available.
+                if (!empty($insight['resourceVisualization'])) {
+                    $visualization = $insight['resourceVisualization'];
+                    $remoteitem['name'] = $visualization['title'] ?? $remoteitem['name'];
+
+                    // Determine if it's a file or folder based on type.
+                    $type = !empty($visualization['type']) ? strtolower($visualization['type']) : '';
+                    if (strpos($type, 'folder') !== false || $type === 'spsite' || $type === 'splist') {
+                        $remoteitem['folder'] = ['childCount' => 0];
+                    } else {
+                        $remoteitem['file'] = [];
+                        if (!empty($visualization['mediaType'])) {
+                            $remoteitem['file']['mimeType'] = $visualization['mediaType'];
+                        }
+                    }
+                }
+
+                // Add timestamps from lastShared if available.
+                if (!empty($insight['lastShared']['sharedDateTime'])) {
+                    $remoteitem['lastModifiedDateTime'] = $insight['lastShared']['sharedDateTime'];
+                    $remoteitem['createdDateTime'] = $insight['lastShared']['sharedDateTime'];
+                    $item['lastModifiedDateTime'] = $insight['lastShared']['sharedDateTime'];
+                    $item['createdDateTime'] = $insight['lastShared']['sharedDateTime'];
+                }
+
+                // Add creator information if available.
+                if (!empty($insight['lastShared']['sharedBy'])) {
+                    $remoteitem['createdBy'] = [
+                        'user' => [
+                            'displayName' => $insight['lastShared']['sharedBy']['displayName'] ?? '',
+                        ],
+                    ];
+                }
+
+                $item['remoteItem'] = $remoteitem;
+                $transformeditems[] = $item;
+            }
+            $result['value'] = $transformeditems;
+        }
+
+        return $result;
+    }
+
+    /**
+     * List the children for a shared item.
+     *
+     * @param string $driveid The drive id of the shared item.
+     * @param string $itemid The item id within the drive.
+     * @param string $skiptoken Pagination token.
+     * @return array|null Returned response, or null if error.
+     * @throws moodle_exception
+     */
+    public function get_shared_item_children(string $driveid, string $itemid, string $skiptoken = ''): ?array {
+        if (empty($driveid)) {
+            return null;
+        }
+
+        $drive = rawurlencode($driveid);
+        $endpoint = !empty($itemid)
+            ? "/drives/$drive/items/" . rawurlencode($itemid) . "/children"
+            : "/drives/$drive/root/children";
+
+        $odataqueries = ['$top=' . self::DEFAULT_PAGE_SIZE];
+        if (empty($skiptoken) || !is_string($skiptoken)) {
+            $skiptoken = '';
+        }
+        if (!empty($skiptoken)) {
+            $odataqueries[] = '$skiptoken=' . $skiptoken;
+        }
+        if (!empty($odataqueries)) {
+            $endpoint .= '?' . implode('&', $odataqueries);
+        }
+
+        $response = $this->apicall('get', $endpoint);
+        $expectedparams = ['value' => null];
+
+        return $this->process_apicall_response($response, $expectedparams);
+    }
+
+    /**
      * Get files from trendingAround api.
      *
      * @param string $upn user's userPrincipalName
@@ -1489,6 +1650,24 @@ class unified extends o365api {
     }
 
     /**
+     * Get metadata for an item in an arbitrary drive.
+     *
+     * @param string $driveid Target drive id.
+     * @param string $itemid Target item id.
+     * @return array|null The item metadata.
+     * @throws moodle_exception
+     */
+    public function get_drive_item_metadata(string $driveid, string $itemid): ?array {
+        if (empty($driveid) || empty($itemid)) {
+            return null;
+        }
+
+        $response = $this->apicall('get', "/drives/" . rawurlencode($driveid) . "/items/" . rawurlencode($itemid));
+        $expectedparams = ['id' => null];
+        return $this->process_apicall_response($response, $expectedparams);
+    }
+
+    /**
      * Get a file's content by its file id.
      *
      * @param string $fileid The file's ID.
@@ -1497,6 +1676,17 @@ class unified extends o365api {
      */
     public function get_file_by_id(string $fileid, string $o365userid): string {
         return $this->apicall('get', "/users/$o365userid/drive/items/$fileid/content");
+    }
+
+    /**
+     * Get a file's content by drive id and item id.
+     *
+     * @param string $driveid Target drive id.
+     * @param string $itemid Target item id.
+     * @return string The file content.
+     */
+    public function get_drive_file_by_id(string $driveid, string $itemid): string {
+        return $this->apicall('get', "/drives/" . rawurlencode($driveid) . "/items/" . rawurlencode($itemid) . "/content");
     }
 
     /**
@@ -2469,6 +2659,30 @@ class unified extends o365api {
         $response = $this->apicall('get', $endpoint);
         $expectedparams = ['value' => null];
 
+        return $this->process_apicall_response($response, $expectedparams);
+    }
+
+    /**
+     * Search for files and folders using Microsoft Graph search API.
+     *
+     * @param string $query Search query string.
+     * @param string $skiptoken Pagination token.
+     * @return array|null Returned response, or null if error.
+     * @throws moodle_exception
+     */
+    public function search_files(string $query, string $skiptoken = ''): ?array {
+        // Properly encode the query to prevent OData injection.
+        $encodedquery = rawurlencode($query);
+        $endpoint = "/me/drive/search(q='{$encodedquery}')";
+
+        $odataqueries = ['$top=' . self::DEFAULT_PAGE_SIZE];
+        if (!empty($skiptoken)) {
+            $odataqueries[] = '$skiptoken=' . $skiptoken;
+        }
+        $endpoint .= '?' . implode('&', $odataqueries);
+
+        $response = $this->apicall('get', $endpoint);
+        $expectedparams = ['value' => null];
         return $this->process_apicall_response($response, $expectedparams);
     }
 }
