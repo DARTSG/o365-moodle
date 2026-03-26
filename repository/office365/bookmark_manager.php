@@ -70,7 +70,7 @@ if (empty($bookmarks)) {
     
     $table = new html_table();
     $table->head = [
-        get_string('title'),
+        get_string('folder', 'repository_office365'),
         get_string('path'),
         get_string('actions'),
     ];
