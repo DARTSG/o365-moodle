@@ -31,6 +31,7 @@ if [[ $? -ne 0 ]]; then
   exit 1
 fi
 
+# Install each plugin using rsync
 for plugin in "${plugins_to_install[@]}"; do
   rsync -rltvz \
   --chmod=D755,F644 \
@@ -40,4 +41,6 @@ for plugin in "${plugins_to_install[@]}"; do
   "root@$remote_ip:/var/www/html/$plugin"
 done
 
-
+# Purge Moodle caches on the remote server
+echo "Purging Moodle caches..."
+ssh "root@$remote_ip" "php /var/www/html/admin/cli/purge_caches.php"
