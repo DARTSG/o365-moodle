@@ -33,6 +33,7 @@ use local_o365\utils;
  * Microsoft 365 repository.
  */
 class repository_office365 extends repository {
+
     /** @var httpclient An HTTP client to use. */
     protected $httpclient;
 
@@ -56,7 +57,6 @@ class repository_office365 extends repository {
         if (utils::is_connected()) {
             $this->clientdata = clientdata::instance_from_oidc();
         }
-
         $this->unifiedconfigured = unified::is_configured();
     }
 
@@ -92,7 +92,6 @@ class repository_office365 extends repository {
                 return new unified($token, $this->httpclient);
             }
         }
-
         return false;
     }
 
@@ -130,17 +129,39 @@ class repository_office365 extends repository {
             $SESSION->repository_office365['curpath'][$clientid] = $path;
         }
 
+        // Handle bookmark actions.
+        $bookmarkaction = optional_param('bookmarkaction', '', PARAM_ALPHA);
+        $bookmarkpath = optional_param('bookmarkpath', '', PARAM_RAW);
+        $bookmarktitle = optional_param('bookmarktitle', '', PARAM_TEXT);
+        
+        if (!empty($bookmarkaction) && !empty($bookmarkpath)) {
+            if ($bookmarkaction === 'add' && !empty($bookmarktitle)) {
+                $this->add_bookmark($bookmarkpath, $bookmarktitle);
+            } else if ($bookmarkaction === 'remove') {
+                $this->remove_bookmark($bookmarkpath);
+            }
+        }
+
         $list = [];
         $breadcrumb = [['name' => $this->name, 'path' => '/']];
 
         $unifiedactive = false;
         $trendingactive = false;
+        $sharedwithmeactive = false;
+        $teamsactive = false;
+        $bookmarksactive = false;
         $trendingdisabled = get_config('office365', 'trendinggroup');
+        $sharedwithmedisabled = get_config('office365', 'sharedwithme');
+        $teamsdisabled = get_config('office365', 'teams');
+        $bookmarksdisabled = get_config('office365', 'bookmarks');
+        $bookmarksactive = empty($bookmarksdisabled);
         if ($this->unifiedconfigured === true) {
             $unifiedtoken = $this->get_unified_token();
             if (!empty($unifiedtoken)) {
                 $unifiedactive = true;
                 $trendingactive = (empty($trendingdisabled)) ? true : false;
+                $sharedwithmeactive = (empty($sharedwithmedisabled)) ? true : false;
+                $teamsactive = (empty($teamsdisabled)) ? true : false;
             }
         }
 
@@ -156,10 +177,70 @@ class repository_office365 extends repository {
             }
         }
 
-        if (strpos($path, '/my/') === 0) {
+        if (strpos($path, '/bookmark-action/') === 0) {
+            // Handle bookmark action and redirect to original path.
+            if ($bookmarksactive) {
+                $pathparts = explode('/', trim($path, '/'));
+                if (count($pathparts) >= 3) {
+                    $action = $pathparts[1]; // 'add' or 'remove'
+                    
+                    // Validate action parameter.
+                    if ($action !== 'add' && $action !== 'remove') {
+                        // Invalid action, skip processing.
+                        return [
+                            'dynload' => true,
+                            'nologin' => true,
+                            'nosearch' => false,
+                            'list' => [],
+                            'path' => $breadcrumb,
+                        ];
+                    }
+                    
+                    // Decode and validate target path.
+                    $targetpath = base64_decode($pathparts[2], true);
+                    if ($targetpath === false || empty($targetpath)) {
+                        // Invalid path, skip processing.
+                        return [
+                            'dynload' => true,
+                            'nologin' => true,
+                            'nosearch' => false,
+                            'list' => [],
+                            'path' => $breadcrumb,
+                        ];
+                    }
+                    
+                    if ($action === 'add' && count($pathparts) >= 4) {
+                        $title = base64_decode($pathparts[3], true);
+                        if ($title !== false && !empty($title)) {
+                            $this->add_bookmark($targetpath, $title);
+                        }
+                    } else if ($action === 'remove') {
+                        $this->remove_bookmark($targetpath);
+                    }
+                    
+                    // Redirect back to the folder by recursively calling get_listing with the original path.
+                    return $this->get_listing($targetpath, $page);
+                }
+            }
+        } else if (strpos($path, '/bookmarks/') === 0) {
+            // Path is in bookmarks.
+            if ($bookmarksactive) {
+                [$list, $breadcrumb] = $this->get_listing_bookmarks();
+            }
+        } else if (strpos($path, '/my/') === 0) {
             if ($unifiedactive === true) {
                 // Path is in my files.
                 [$list, $breadcrumb] = $this->get_listing_my_unified(substr($path, 3));
+            }
+        } else if (strpos($path, '/shared/') === 0) {
+            if ($sharedwithmeactive === true) {
+                // Path is in shared-with-me files.
+                [$list, $breadcrumb] = $this->get_listing_shared_with_me(substr($path, 8));
+            }
+        } else if (strpos($path, '/teams/') === 0) {
+            if ($teamsactive === true) {
+                // Path is in teams files.
+                [$list, $breadcrumb] = $this->get_listing_teams(substr($path, 7));
             }
         } else if (strpos($path, '/groups/') === 0) {
             if ($showgroups === true) {
@@ -172,6 +253,18 @@ class repository_office365 extends repository {
                 [$list, $breadcrumb] = $this->get_listing_trending_unified(substr($path, 9));
             }
         } else {
+            // Show bookmarks if enabled and any exist.
+            if ($bookmarksactive) {
+                $bookmarks = $this->get_bookmarks();
+                if (!empty($bookmarks)) {
+                    $list[] = [
+                        'title' => get_string('bookmarks', 'repository_office365'),
+                        'path' => '/bookmarks/',
+                        'thumbnail' => $OUTPUT->pix_url('bookmark', 'repository_office365')->out(false),
+                        'children' => [],
+                    ];
+                }
+            }
             if ($unifiedactive === true) {
                 $list[] = [
                     'title' => get_string('myfiles', 'repository_office365'),
@@ -180,7 +273,6 @@ class repository_office365 extends repository {
                     'children' => [],
                 ];
             }
-
             if ($showgroups === true) {
                 $list[] = [
                     'title' => get_string('groups', 'repository_office365'),
@@ -189,7 +281,22 @@ class repository_office365 extends repository {
                     'children' => [],
                 ];
             }
-
+            if ($teamsactive === true) {
+                $list[] = [
+                    'title' => get_string('teams', 'repository_office365'),
+                    'path' => '/teams/',
+                    'thumbnail' => $OUTPUT->pix_url('sharepoint', 'repository_office365')->out(false),
+                    'children' => [],
+                ];
+            }
+            if ($sharedwithmeactive === true) {
+                $list[] = [
+                    'title' => get_string('sharedwithme', 'repository_office365'),
+                    'path' => '/shared/',
+                    'thumbnail' => $OUTPUT->pix_url('onedrive', 'repository_office365')->out(false),
+                    'children' => [],
+                ];
+            }
             if ($trendingactive === true) {
                 $list[] = [
                     'title' => get_string('trendingaround', 'repository_office365'),
@@ -199,12 +306,11 @@ class repository_office365 extends repository {
                 ];
             }
         }
-
         if ($this->path_is_upload($path) === true) {
             return [
                 'dynload' => true,
                 'nologin' => true,
-                'nosearch' => true,
+                'nosearch' => false,
                 'path' => $breadcrumb,
                 'upload' => [
                     'label' => get_string('file', 'repository_office365'),
@@ -215,7 +321,7 @@ class repository_office365 extends repository {
         return [
             'dynload' => true,
             'nologin' => true,
-            'nosearch' => true,
+            'nosearch' => false,
             'list' => $list,
             'path' => $breadcrumb,
         ];
@@ -268,11 +374,9 @@ class repository_office365 extends repository {
                 }
             }
         }
-
         if ($this->path_is_upload($filepath) === true) {
             $filepath = substr($filepath, 0, -strlen('/upload/'));
         }
-
         $filename = (!empty($saveasfilename)) ? $saveasfilename : $_FILES['repo_upload_file']['name'];
         $filename = clean_param($filename, PARAM_FILE);
         $content = file_get_contents($_FILES['repo_upload_file']['tmp_name']);
@@ -284,7 +388,6 @@ class repository_office365 extends repository {
                 $o365userid = utils::get_o365_userid($USER->id);
                 $result = $apiclient->create_file($parentid, $filename, $content, 'application/octet-stream', $o365userid);
             }
-
             $source = $this->pack_reference(['id' => $result['id'], 'source' => 'onedrive']);
         } else if ($clienttype === 'onedrivegroup') {
             if ($this->unifiedconfigured === true) {
@@ -293,21 +396,16 @@ class repository_office365 extends repository {
                 $pathtrimmed = trim($parentid, '/');
                 $pathparts = explode('/', $pathtrimmed);
                 $coursesbyid = enrol_get_users_courses($USER->id, true);
-                if (
-                    !is_numeric($pathparts[0]) ||
-                    !isset($coursesbyid[$pathparts[0]]) ||
-                    \local_o365\feature\coursesync\utils::is_course_sync_enabled($pathparts[0]) !== true
-                ) {
+                if (!is_numeric($pathparts[0]) || !isset($coursesbyid[$pathparts[0]])
+                        || \local_o365\feature\coursesync\utils::is_course_sync_enabled($pathparts[0]) !== true) {
                     utils::debug(get_string('errorbadpath', 'repository_office365'), __METHOD__, ['path' => $filepath]);
                     throw new moodle_exception('errorbadpath', 'repository_office365');
                 }
-
                 $courseid = (int)$pathparts[0];
                 if (!is_numeric($pathparts[1]) && $pathparts[1] !== 'coursegroup') {
                     utils::debug(get_string('errorbadpath', 'repository_office365'), __METHOD__, ['path' => $filepath]);
                     throw new moodle_exception('errorbadpath', 'repository_office365');
                 }
-
                 if ($pathparts[1] === 'coursegroup') {
                     $filters = ['type' => 'group', 'subtype' => 'course', 'moodleid' => $courseid];
                     $group = $DB->get_record('local_o365_objects', $filters);
@@ -317,7 +415,6 @@ class repository_office365 extends repository {
                     $filters = ['type' => 'group', 'subtype' => 'usergroup', 'moodleid' => $groupid];
                     $group = $DB->get_record('local_o365_objects', $filters);
                 }
-
                 try {
                     $result = $apiclient->create_group_file($group->objectid, $filename, $content);
                     $source = $this->pack_reference(['id' => $result['id'], 'source' => $clienttype,
@@ -391,7 +488,7 @@ class repository_office365 extends repository {
                 if ($enabledcourses === true || in_array($course->id, $enabledcourses)) {
                     $list[] = [
                         'title' => $course->shortname,
-                        'path' => '/groups/' . $course->id,
+                        'path' => '/groups/'.$course->id,
                         'thumbnail' => $OUTPUT->pix_url(file_folder_icon(90))->out(false),
                         'children' => [],
                     ];
@@ -400,17 +497,13 @@ class repository_office365 extends repository {
         } else {
             $pathtrimmed = trim($path, '/');
             $pathparts = explode('/', $pathtrimmed);
-            if (
-                !is_numeric($pathparts[0]) ||
-                !isset($coursesbyid[$pathparts[0]]) ||
-                \local_o365\feature\coursesync\utils::is_course_sync_enabled($pathparts[0]) !== true
-            ) {
+            if (!is_numeric($pathparts[0]) || !isset($coursesbyid[$pathparts[0]])
+                    || \local_o365\feature\coursesync\utils::is_course_sync_enabled($pathparts[0]) !== true) {
                 utils::debug(get_string('errorbadpath', 'repository_office365'), __METHOD__, ['path' => $path]);
                 throw new moodle_exception('errorbadpath', 'repository_office365');
             }
-
             $courseid = (int)$pathparts[0];
-            $curpath = '/groups/' . $courseid;
+            $curpath = '/groups/'.$courseid;
             $breadcrumb[] = ['name' => $coursesbyid[$courseid]->shortname, 'path' => $curpath];
 
             $sql = 'SELECT g.*
@@ -422,7 +515,7 @@ class repository_office365 extends repository {
             if (count($pathparts) === 1) {
                 $list[] = [
                     'title' => get_string('defaultgroupsfolder', 'repository_office365'),
-                    'path' => $curpath . '/coursegroup/',
+                    'path' => $curpath.'/coursegroup/',
                     'thumbnail' => $OUTPUT->pix_url(file_folder_icon(90))->out(false),
                     'children' => [],
                 ];
@@ -430,7 +523,7 @@ class repository_office365 extends repository {
                 foreach ($coursegroups as $group) {
                     $list[] = [
                         'title' => $group->name,
-                        'path' => $curpath . '/' . $group->id . '/',
+                        'path' => $curpath.'/'.$group->id.'/',
                         'thumbnail' => $OUTPUT->pix_url(file_folder_icon(90))->out(false),
                         'children' => [],
                     ];
@@ -441,8 +534,7 @@ class repository_office365 extends repository {
                     utils::debug(get_string('errorbadpath', 'repository_office365'), __METHOD__, ['path' => $path]);
                     throw new moodle_exception('errorbadpath', 'repository_office365');
                 }
-
-                $curpath .= '/' . $pathparts[1] . '/';
+                $curpath .= '/'.$pathparts[1].'/';
                 if ($pathparts[1] === 'coursegroup') {
                     $breadcrumb[] = ['name' => get_string('defaultgroupsfolder', 'repository_office365'), 'path' => $curpath];
                     $filters = ['type' => 'group', 'subtype' => 'course', 'moodleid' => $courseid];
@@ -453,7 +545,6 @@ class repository_office365 extends repository {
                         utils::debug(get_string('errorbadpath', 'repository_office365'), __METHOD__, ['path' => $path]);
                         throw new moodle_exception('errorbadpath', 'repository_office365');
                     }
-
                     $groupid = (int)$pathparts[1];
                     $group = $DB->get_record('groups', ['id' => $groupid]);
                     $breadcrumb[] = ['name' => $group->name, 'path' => $curpath];
@@ -467,36 +558,31 @@ class repository_office365 extends repository {
 
                 if (!empty($group)) {
                     if ($curparent === 'upload') {
-                        $breadcrumb[] = ['name' => get_string('upload', 'repository_office365'), 'path' => $curpath . 'upload/'];
+                        $breadcrumb[] = ['name' => get_string('upload', 'repository_office365'), 'path' => $curpath.'upload/'];
                     } else {
                         $unified = $this->get_unified_apiclient();
                         if ($unified === false) {
                             return [[], $breadcrumb];
                         }
-
                         if (!empty($curparent)) {
                             $metadata = $unified->get_group_file_metadata($group->objectid, $curparent);
                             if (!empty($metadata['parentReference']) && !empty($metadata['parentReference']['path'])) {
-                                $parentrefpath = substr(
-                                    $metadata['parentReference']['path'],
-                                    (strpos($metadata['parentReference']['path'], ':') + 1)
-                                );
+                                $parentrefpath = substr($metadata['parentReference']['path'],
+                                    (strpos($metadata['parentReference']['path'], ':') + 1));
                                 $cache = cache::make('repository_office365', 'unifiedgroupfolderids');
-                                $cache->set($parentrefpath . '/' . $metadata['name'], $metadata['id']);
+                                $cache->set($parentrefpath.'/'.$metadata['name'], $metadata['id']);
                                 if (!empty($parentrefpath)) {
                                     $parentrefpath = explode('/', trim($parentrefpath, '/'));
                                     $currentfullpath = '';
                                     foreach ($parentrefpath as $folder) {
-                                        $currentfullpath .= '/' . $folder;
+                                        $currentfullpath .= '/'.$folder;
                                         $folderid = $cache->get($currentfullpath);
-                                        $breadcrumb[] = ['name' => $folder, 'path' => $curpath . $folderid];
+                                        $breadcrumb[] = ['name' => $folder, 'path' => $curpath.$folderid];
                                     }
                                 }
                             }
-
-                            $breadcrumb[] = ['name' => $metadata['name'], 'path' => $curpath . $metadata['id']];
+                            $breadcrumb[] = ['name' => $metadata['name'], 'path' => $curpath.$metadata['id']];
                         }
-
                         try {
                             $filesresults = $unified->get_group_files($group->objectid, $curparent);
                             $contents = $filesresults['value'];
@@ -507,17 +593,19 @@ class repository_office365 extends repository {
                                     $query = [];
                                     parse_str($nextlink['query'], $query);
                                     if (isset($query['$skiptoken'])) {
-                                        $filesresults = $unified->get_group_files(
-                                            $group->objectid,
-                                            $curparent,
-                                            $query['$skiptoken']
-                                        );
+                                        $filesresults = $unified->get_group_files($group->objectid, $curparent,
+                                            $query['$skiptoken']);
                                         $contents = array_merge($contents, $filesresults['value']);
                                     }
                                 }
                             }
 
                             $list = $this->contents_api_response_to_list($contents, $path, 'unifiedgroup', $group->objectid, true);
+                            
+                            // Add bookmark actions for group subfolders.
+                            if (!empty($curparent)) {
+                                $list = $this->add_bookmark_actions_to_list($list, $curpath . $metadata['id'], $metadata['name']);
+                            }
                         } catch (moodle_exception $e) {
                             $errmsg = 'Exception when retrieving share point files for group';
                             $debugdata = [
@@ -530,6 +618,152 @@ class repository_office365 extends repository {
                     }
                 } else {
                     utils::debug('Could not file group object record', __METHOD__, ['path' => $path]);
+                }
+            }
+        }
+
+        return [$list, $breadcrumb];
+    }
+
+    /**
+     * Get listing for Microsoft Teams files.
+     *
+     * @param string $path Folder path.
+     * @return array List of $list array and $path array.
+     */
+    protected function get_listing_teams($path = '') {
+        $path = (empty($path)) ? '/' : $path;
+
+        global $OUTPUT, $USER;
+
+        $list = [];
+        $breadcrumb = [
+            ['name' => $this->name, 'path' => '/'],
+            ['name' => get_string('teams', 'repository_office365'), 'path' => '/teams/'],
+        ];
+
+        $unified = $this->get_unified_apiclient();
+        if ($unified === false) {
+            return [$list, $breadcrumb];
+        }
+
+        if ($path === '/') {
+            // Show available teams.
+            try {
+                $o365userid = utils::get_o365_userid($USER->id);
+                $teams = $unified->get_user_teams($o365userid);
+
+                foreach ($teams as $team) {
+                    $list[] = [
+                        'title' => $team['displayName'] ?? $team['id'],
+                        'path' => '/teams/' . $team['id'],
+                        'thumbnail' => $OUTPUT->pix_url(file_folder_icon(90))->out(false),
+                        'children' => [],
+                    ];
+                }
+            } catch (moodle_exception $e) {
+                $errmsg = 'Exception when retrieving user teams';
+                $debugdata = [
+                    'message' => $e->getMessage(),
+                ];
+                utils::debug($errmsg, __METHOD__, $debugdata);
+            }
+        } else {
+            // Browse team files.
+            $pathtrimmed = trim($path, '/');
+            $pathparts = explode('/', $pathtrimmed);
+
+            if (empty($pathparts[0])) {
+                utils::debug(get_string('errorbadpath', 'repository_office365'), __METHOD__, ['path' => $path]);
+                throw new moodle_exception('errorbadpath', 'repository_office365');
+            }
+
+            $teamid = $pathparts[0];
+            $curpath = '/teams/' . $teamid;
+
+            // Get team name for breadcrumb.
+            try {
+                $team = $unified->get_group($teamid);
+                $breadcrumb[] = ['name' => $team['displayName'] ?? $teamid, 'path' => $curpath];
+            } catch (moodle_exception $e) {
+                $breadcrumb[] = ['name' => $teamid, 'path' => $curpath];
+            }
+
+            $intragrouppath = $pathparts;
+            unset($intragrouppath[0]);
+            $lastpathpart = end($intragrouppath);
+            $curparent = trim($lastpathpart);
+
+            if ($curparent === 'upload') {
+                $breadcrumb[] = ['name' => get_string('upload', 'repository_office365'), 'path' => $curpath . '/upload/'];
+            } else {
+                if (!empty($curparent)) {
+                    $metadata = $unified->get_group_file_metadata($teamid, $curparent);
+                    if (!empty($metadata['parentReference']) && !empty($metadata['parentReference']['path'])) {
+                        $parentrefpath = substr($metadata['parentReference']['path'],
+                            (strpos($metadata['parentReference']['path'], ':') + 1));
+                        $cache = cache::make('repository_office365', 'unifiedgroupfolderids');
+                        $cache->set($parentrefpath . '/' . $metadata['name'], $metadata['id']);
+                        if (!empty($parentrefpath)) {
+                            $parentrefpath = explode('/', trim($parentrefpath, '/'));
+                            $currentfullpath = '';
+                            foreach ($parentrefpath as $folder) {
+                                $currentfullpath .= '/' . $folder;
+                                $folderid = $cache->get($currentfullpath);
+                                $breadcrumb[] = ['name' => $folder, 'path' => $curpath . '/' . $folderid];
+                            }
+                        }
+                    }
+                    $breadcrumb[] = ['name' => $metadata['name'], 'path' => $curpath . '/' . $metadata['id']];
+                    // Track this folder visit.
+                    $teamname = '';
+                    try {
+                        $team = $unified->get_group($teamid);
+                        $teamname = $team['displayName'] ?? $teamid;
+                    } catch (moodle_exception $e) {
+                        $teamname = $teamid;
+                    }
+                    $this->track_recent_path($curpath . '/' . $metadata['id'], $teamname . ' / ' . $metadata['name']);
+                }
+
+                try {
+                    $filesresults = $unified->get_group_files($teamid, $curparent);
+                    $contents = $filesresults['value'];
+                    while (!empty($filesresults['@odata.nextLink'])) {
+                        $nextlink = parse_url($filesresults['@odata.nextLink']);
+                        $filesresults = [];
+                        if (isset($nextlink['query'])) {
+                            $query = [];
+                            parse_str($nextlink['query'], $query);
+                            if (isset($query['$skiptoken'])) {
+                                $filesresults = $unified->get_group_files($teamid, $curparent, $query['$skiptoken']);
+                                $contents = array_merge($contents, $filesresults['value']);
+                            }
+                        }
+                    }
+
+                    $list = $this->contents_api_response_to_list($contents, $path, 'teams', $teamid, true);
+                    
+                    // Add bookmark actions for team subfolders.
+                    if (!empty($curparent)) {
+                        $teamname = $teamid;
+                        try {
+                            $team = $unified->get_group($teamid);
+                            $teamname = $team['displayName'] ?? $teamid;
+                        } catch (moodle_exception $e) {
+                            $teamname = $teamid;
+                        }
+                        $list = $this->add_bookmark_actions_to_list($list, $curpath . '/' . $metadata['id'], 
+                                                                     $teamname . ' / ' . $metadata['name']);
+                    }
+                } catch (moodle_exception $e) {
+                    $errmsg = 'Exception when retrieving team files';
+                    $debugdata = [
+                        'fullpath' => $path,
+                        'message' => $e->getMessage(),
+                        'teamid' => $teamid,
+                    ];
+                    utils::debug($errmsg, __METHOD__, $debugdata);
                 }
             }
         }
@@ -594,29 +828,143 @@ class repository_office365 extends repository {
             $o365userid = utils::get_o365_userid($USER->id);
             $metadata = $unified->get_file_metadata($realpath, $o365userid);
             if (!empty($metadata['parentReference']) && !empty($metadata['parentReference']['path'])) {
-                $parentrefpath = substr(
-                    $metadata['parentReference']['path'],
-                    strpos($metadata['parentReference']['path'], ':') + 1
-                );
+                $parentrefpath = substr($metadata['parentReference']['path']
+                  , (strpos($metadata['parentReference']['path'], ':') + 1));
                 $cache = cache::make('repository_office365', 'unifiedfolderids');
-                $result = $cache->set($parentrefpath . '/' . $metadata['name'], $metadata['id']);
+                $result = $cache->set($parentrefpath.'/'.$metadata['name'], $metadata['id']);
                 if (!empty($parentrefpath)) {
                     $parentrefpath = explode('/', trim($parentrefpath, '/'));
                     $currentfullpath = '';
                     foreach ($parentrefpath as $folder) {
-                        $currentfullpath .= '/' . $folder;
+                        $currentfullpath .= '/'.$folder;
                         $folderid = $cache->get($currentfullpath);
-                        $breadcrumb[] = ['name' => $folder, 'path' => '/my/' . $folderid];
+                        $breadcrumb[] = ['name' => $folder, 'path' => '/my/'.$folderid];
                     }
                 }
             }
-
-            $breadcrumb[] = ['name' => $metadata['name'], 'path' => '/my/' . $metadata['id']];
+            $breadcrumb[] = ['name' => $metadata['name'], 'path' => '/my/'.$metadata['id']];
+            // Track this folder visit.
+            $this->track_recent_path('/my/'.$metadata['id'], $metadata['name']);
         }
 
         if ($this->path_is_upload($path) === true) {
             $breadcrumb[] = ['name' => get_string('upload', 'repository_office365'),
                 'path' => '/my/' . $metadata['id'] . '/upload/'];
+        } else if ($realpath !== '/') {
+            // Add bookmark actions for non-root folders.
+            $list = $this->add_bookmark_actions_to_list($list, '/my/' . $metadata['id'], $metadata['name']);
+        }
+
+        return [$list, $breadcrumb];
+    }
+
+    /**
+     * Get listing for items shared with the current user.
+     *
+     * @param string $path Folder path.
+     * @return array List of $list array and $path array.
+     */
+    protected function get_listing_shared_with_me($path = '') {
+        $path = (empty($path)) ? '/' : $path;
+
+        $list = [];
+        $unified = $this->get_unified_apiclient();
+
+        $breadcrumb = [
+            ['name' => $this->name, 'path' => '/'],
+            ['name' => get_string('sharedwithme', 'repository_office365'), 'path' => '/shared/'],
+        ];
+
+        if ($unified === false) {
+            return [$list, $breadcrumb];
+        }
+
+        if ($path === '/') {
+            try {
+                $filesresults = $unified->get_shared_with_me();
+                $contents = $filesresults['value'];
+                while (!empty($filesresults['@odata.nextLink'])) {
+                    $nextlink = parse_url($filesresults['@odata.nextLink']);
+                    $filesresults = [];
+                    if (isset($nextlink['query'])) {
+                        $query = [];
+                        parse_str($nextlink['query'], $query);
+                        if (isset($query['$skiptoken'])) {
+                            $filesresults = $unified->get_shared_with_me($query['$skiptoken']);
+                            $contents = array_merge($contents, $filesresults['value']);
+                        }
+                    }
+                }
+                $list = $this->contents_api_response_to_list($contents, '/shared', 'sharedwithme', null, false);
+            } catch (moodle_exception $e) {
+                $errmsg = 'Exception when retrieving shared-with-me files';
+                $debugdata = [
+                    'fullpath' => $path,
+                    'message' => $e->getMessage(),
+                ];
+                utils::debug($errmsg, __METHOD__, $debugdata);
+                return [$list, $breadcrumb];
+            }
+        } else {
+            $pathtrimmed = trim($path, '/');
+            $pathparts = explode('/', $pathtrimmed);
+            if (count($pathparts) < 2) {
+                utils::debug(get_string('errorbadpath', 'repository_office365'), __METHOD__, ['path' => $path]);
+                throw new moodle_exception('errorbadpath', 'repository_office365');
+            }
+
+            $driveid = $pathparts[0];
+            $itemid = $pathparts[1];
+
+            try {
+                $metadata = $unified->get_drive_item_metadata($driveid, $itemid);
+            } catch (moodle_exception $e) {
+                $errmsg = 'Exception when retrieving metadata for shared-with-me folder';
+                utils::debug($errmsg, __METHOD__, ['path' => $path, 'message' => $e->getMessage()]);
+                return [$list, $breadcrumb];
+            }
+
+            if (!empty($metadata['parentReference']['id']) && $metadata['parentReference']['id'] !== $itemid) {
+                $parentname = isset($metadata['parentReference']['name'])
+                    ? $metadata['parentReference']['name']
+                    : get_string('parentfolder', 'repository');
+                $breadcrumb[] = [
+                    'name' => $parentname,
+                    'path' => '/shared/' . $driveid . '/' . $metadata['parentReference']['id'],
+                ];
+            }
+            $currentname = isset($metadata['name']) ? $metadata['name'] : $itemid;
+            $breadcrumb[] = ['name' => $currentname, 'path' => '/shared/' . $driveid . '/' . $itemid];
+
+            try {
+                $filesresults = $unified->get_shared_item_children($driveid, $itemid);
+                $contents = $filesresults['value'];
+                while (!empty($filesresults['@odata.nextLink'])) {
+                    $nextlink = parse_url($filesresults['@odata.nextLink']);
+                    $filesresults = [];
+                    if (isset($nextlink['query'])) {
+                        $query = [];
+                        parse_str($nextlink['query'], $query);
+                        if (isset($query['$skiptoken'])) {
+                            $filesresults = $unified->get_shared_item_children($driveid, $itemid, $query['$skiptoken']);
+                            $contents = array_merge($contents, $filesresults['value']);
+                        }
+                    }
+                }
+
+                $list = $this->contents_api_response_to_list($contents, '/shared', 'sharedwithme', $driveid, false);
+                
+                // Add bookmark actions for shared folders.
+                $list = $this->add_bookmark_actions_to_list($list, '/shared/' . $driveid . '/' . $itemid, $currentname);
+            } catch (moodle_exception $e) {
+                $errmsg = 'Exception when retrieving shared-with-me child items';
+                $debugdata = [
+                    'fullpath' => $path,
+                    'message' => $e->getMessage(),
+                ];
+                utils::debug($errmsg, __METHOD__, $debugdata);
+                return [$list, $breadcrumb];
+            }
         }
 
         return [$list, $breadcrumb];
@@ -673,9 +1021,10 @@ class repository_office365 extends repository {
      *
      * @param string $response The response from the API.
      * @param string $path The list path.
-     * @param string $clienttype The type of client that the response is from. onedrive/unified
+     * @param string $clienttype The type of client that the response is from. onedrive/unified/unifiedgroup/teams/sharedwithme/trendingaround
      * @param string $parentinfo Client type-specific parent information.
      *                               If using the unifiedgroup clienttype, this is the parent group ID.
+     *                               If using the teams clienttype, this is the team ID.
      * @param bool $addupload Whether to add the "Upload" file item.
      * @return array A $list array to be used by the respository class in get_listing.
      */
@@ -683,13 +1032,19 @@ class repository_office365 extends repository {
         global $OUTPUT;
         $list = [];
         if ($clienttype === 'onedrive') {
-            $pathprefix = '/my' . $path;
+            $pathprefix = '/my'.$path;
             $uploadpathprefix = $pathprefix;
         } else if ($clienttype === 'unified') {
             $pathprefix = '/my';
-            $uploadpathprefix = $pathprefix . $path;
+            $uploadpathprefix = $pathprefix.$path;
         } else if ($clienttype === 'unifiedgroup') {
-            $pathprefix = '/groups' . $path;
+            $pathprefix = '/groups'.$path;
+            $uploadpathprefix = $pathprefix;
+        } else if ($clienttype === 'teams') {
+            $pathprefix = '/teams/'.$path;
+            $uploadpathprefix = $pathprefix;
+        } else if ($clienttype === 'sharedwithme') {
+            $pathprefix = '/shared';
             $uploadpathprefix = $pathprefix;
         } else if ($clienttype === 'trendingaround') {
             $pathprefix = '/my';
@@ -698,7 +1053,7 @@ class repository_office365 extends repository {
         if ($addupload === true) {
             $list[] = [
                 'title' => get_string('upload', 'repository_office365'),
-                'path' => $uploadpathprefix . '/upload/',
+                'path' => $uploadpathprefix.'/upload/',
                 'thumbnail' => $OUTPUT->pix_url('a/add_file')->out(false),
                 'children' => [],
             ];
@@ -706,7 +1061,7 @@ class repository_office365 extends repository {
 
         if (isset($response)) {
             foreach ($response as $content) {
-                if ($clienttype === 'unified' || $clienttype === 'unifiedgroup') {
+                if ($clienttype === 'unified' || $clienttype === 'unifiedgroup' || $clienttype === 'teams') {
                     $itempath = $pathprefix . '/' . $content['id'];
                     if (isset($content['folder'])) {
                         $list[] = [
@@ -725,7 +1080,7 @@ class repository_office365 extends repository {
                                 'id' => $content['id'],
                                 'source' => 'onedrive',
                             ];
-                        } else if ($clienttype === 'unifiedgroup') {
+                        } else if ($clienttype === 'unifiedgroup' || $clienttype === 'teams') {
                             $source = [
                                 'id' => $content['id'],
                                 'source' => 'onedrivegroup',
@@ -748,6 +1103,69 @@ class repository_office365 extends repository {
                             'size' => $content['size'],
                             'url' => $url,
                             'thumbnail' => $OUTPUT->pix_url(file_extension_icon($content['name'], 90))->out(false),
+                            'author' => $author,
+                            'source' => $this->pack_reference($source),
+                        ];
+                    }
+                } else if ($clienttype === 'sharedwithme') {
+                    $remoteitem = $content;
+                    if (isset($content['remoteItem'])) {
+                        $remoteitem = $content['remoteItem'];
+                    }
+                    if (empty($remoteitem['parentReference']['driveId']) || empty($remoteitem['id'])) {
+                        continue;
+                    }
+
+                    $driveid = $remoteitem['parentReference']['driveId'];
+                    $itemid = $remoteitem['id'];
+                    $itempath = $pathprefix . '/' . $driveid . '/' . $itemid;
+                    $created = isset($remoteitem['createdDateTime'])
+                        ? $remoteitem['createdDateTime']
+                        : (isset($content['createdDateTime']) ? $content['createdDateTime'] : null);
+                    $modified = isset($remoteitem['lastModifiedDateTime'])
+                        ? $remoteitem['lastModifiedDateTime']
+                        : (isset($content['lastModifiedDateTime']) ? $content['lastModifiedDateTime'] : null);
+
+                    if (isset($remoteitem['folder'])) {
+                        $list[] = [
+                            'title' => $remoteitem['name'],
+                            'path' => $itempath,
+                            'thumbnail' => $OUTPUT->pix_url(file_folder_icon(90))->out(false),
+                            'date' => !empty($created) ? strtotime($created) : null,
+                            'datemodified' => !empty($modified) ? strtotime($modified) : null,
+                            'datecreated' => !empty($created) ? strtotime($created) : null,
+                            'children' => [],
+                        ];
+                    } else if (isset($remoteitem['file'])) {
+                        $url = isset($remoteitem['webUrl']) ? $remoteitem['webUrl'] : '';
+                        if (!empty($url)) {
+                            $url .= (strpos($url, '?') === false) ? '?web=1' : '&web=1';
+                        }
+                        $source = [
+                            'id' => $itemid,
+                            'source' => 'sharedwithme',
+                            'driveid' => $driveid,
+                        ];
+
+                        $author = '';
+                        if (!empty($remoteitem['createdBy']['user']['displayName'])) {
+                            $author = $remoteitem['createdBy']['user']['displayName'];
+                            $author = explode(',', $author);
+                            $author = $author[0];
+                        } else if (!empty($content['createdBy']['user']['displayName'])) {
+                            $author = $content['createdBy']['user']['displayName'];
+                            $author = explode(',', $author);
+                            $author = $author[0];
+                        }
+
+                        $list[] = [
+                            'title' => $remoteitem['name'],
+                            'date' => !empty($created) ? strtotime($created) : null,
+                            'datemodified' => !empty($modified) ? strtotime($modified) : null,
+                            'datecreated' => !empty($created) ? strtotime($created) : null,
+                            'size' => isset($remoteitem['size']) ? $remoteitem['size'] : null,
+                            'url' => $url,
+                            'thumbnail' => $OUTPUT->pix_url(file_extension_icon($remoteitem['name'], 90))->out(false),
                             'author' => $author,
                             'source' => $this->pack_reference($source),
                         ];
@@ -878,12 +1296,10 @@ class repository_office365 extends repository {
             if ($this->unifiedconfigured === true) {
                 $sourceclient = $this->get_unified_apiclient();
             }
-
             if (empty($sourceclient)) {
                 utils::debug('Could not construct onedrive api.', __METHOD__);
                 throw new moodle_exception('errorwhiledownload', 'repository_office365');
             }
-
             $o365userid = utils::get_o365_userid($USER->id);
             $file = $sourceclient->get_file_by_id($reference['id'], $o365userid);
         } else if ($reference['source'] === 'onedrivegroup') {
@@ -893,18 +1309,24 @@ class repository_office365 extends repository {
                 utils::debug('Tried to access a onedrive group file while the graph api is disabled.', __METHOD__);
                 throw new moodle_exception('errorwhiledownload', 'repository_office365');
             }
-
             $file = $sourceclient->get_group_file_by_id($reference['groupid'], $reference['id']);
+        } else if ($reference['source'] === 'sharedwithme') {
+            if ($this->unifiedconfigured === true) {
+                $sourceclient = $this->get_unified_apiclient();
+            }
+            if (empty($sourceclient) || empty($reference['driveid'])) {
+                utils::debug('Could not construct unified api client for shared items.', __METHOD__, $reference);
+                throw new moodle_exception('errorwhiledownload', 'repository_office365');
+            }
+            $file = $sourceclient->get_drive_file_by_id($reference['driveid'], $reference['id']);
         } else if ($reference['source'] === 'trendingaround') {
             if ($this->unifiedconfigured === true) {
                 $sourceclient = $this->get_unified_apiclient();
             }
-
             if (empty($sourceclient)) {
                 utils::debug('Could not construct unified api.', __METHOD__);
                 throw new moodle_exception('errorwhiledownload', 'repository_office365');
             }
-
             $file = $sourceclient->get_file_by_url($reference['url']);
         }
 
@@ -914,7 +1336,6 @@ class repository_office365 extends repository {
                 $result = file_put_contents($path, $file);
             }
         }
-
         if (empty($result)) {
             $errmsg = get_string('errorwhiledownload', 'repository_office365');
             $debugdata = [
@@ -924,7 +1345,6 @@ class repository_office365 extends repository {
             utils::debug($errmsg, __METHOD__, $debugdata);
             throw new moodle_exception('errorwhiledownload', 'repository_office365');
         }
-
         return ['path' => $path, 'url' => $reference];
     }
 
@@ -1072,7 +1492,6 @@ class repository_office365 extends repository {
             if ($usefilereference) {
                 $linktype = 'directlink'; // FILE_REFERENCE - direct link without changing permissions.
             }
-
             // Note: FILE_CONTROLLED_LINK is handled by reference_file_selected() callback, not here.
 
             $reference = [
@@ -1085,11 +1504,9 @@ class repository_office365 extends repository {
             if (isset($sourceunpacked['url'])) {
                 $reference['url'] = $sourceunpacked['url'];
             }
-
             if (isset($sourceunpacked['downloadurl'])) {
                 $reference['downloadurl'] = $sourceunpacked['downloadurl'];
             }
-
             if (isset($sourceunpacked['groupid'])) {
                 $reference['groupid'] = $sourceunpacked['groupid'];
             }
@@ -1112,9 +1529,18 @@ class repository_office365 extends repository {
                             utils::debug('Tried to access a onedrive group file while the graph api is disabled.', __METHOD__);
                             throw new moodle_exception('errorwhiledownload', 'repository_office365');
                         }
-
                         $sourceclient = $this->get_unified_apiclient();
                         $metadata = $sourceclient->get_group_file_metadata($sourceunpacked['groupid'], $fileid);
+                        if (isset($metadata['webUrl'])) {
+                            $reference['url'] = $metadata['webUrl'];
+                        }
+                    } else if ($filesource === 'sharedwithme') {
+                        if ($this->unifiedconfigured !== true) {
+                            utils::debug('Tried to access a shared-with-me file while the graph api is disabled.', __METHOD__);
+                            throw new moodle_exception('errorwhiledownload', 'repository_office365');
+                        }
+                        $sourceclient = $this->get_unified_apiclient();
+                        $metadata = $sourceclient->get_drive_item_metadata($sourceunpacked['driveid'], $fileid);
                         if (isset($metadata['webUrl'])) {
                             $reference['url'] = $metadata['webUrl'];
                         }
@@ -1136,9 +1562,18 @@ class repository_office365 extends repository {
                             utils::debug('Tried to access a onedrive group file while the graph api is disabled.', __METHOD__);
                             throw new moodle_exception('errorwhiledownload', 'repository_office365');
                         }
-
                         $sourceclient = $this->get_unified_apiclient();
                         $metadata = $sourceclient->get_group_file_metadata($sourceunpacked['groupid'], $fileid);
+                        if (isset($metadata['webUrl'])) {
+                            $reference['url'] = $metadata['webUrl'];
+                        }
+                    } else if ($filesource === 'sharedwithme') {
+                        if ($this->unifiedconfigured !== true) {
+                            utils::debug('Tried to access a shared-with-me file while the graph api is disabled.', __METHOD__);
+                            throw new moodle_exception('errorwhiledownload', 'repository_office365');
+                        }
+                        $sourceclient = $this->get_unified_apiclient();
+                        $metadata = $sourceclient->get_drive_item_metadata($sourceunpacked['driveid'], $fileid);
                         if (isset($metadata['webUrl'])) {
                             $reference['url'] = $metadata['webUrl'];
                         }
@@ -1147,7 +1582,6 @@ class repository_office365 extends repository {
                             utils::debug('Tried to access a trending around me file while the graph api is disabled.', __METHOD__);
                             throw new moodle_exception('errorwhiledownload', 'repository_office365');
                         }
-
                         $sourceclient = $this->get_unified_apiclient();
                         $filedata = $sourceclient->get_file_data($fileid);
                         if (isset($filedata['@microsoft.graph.downloadUrl'])) {
@@ -1155,6 +1589,7 @@ class repository_office365 extends repository {
                         }
                     }
                 }
+
             } catch (moodle_exception $e) {
                 $errmsg = 'There was a problem making the API call.';
                 $debugdata = [
@@ -1177,15 +1612,12 @@ class repository_office365 extends repository {
             if (!isset($sourceunpacked['source'])) {
                 $errmsg = 'Source is not set.';
             }
-
             if (isset($sourceunpacked['id'])) {
                 $errmsg .= ' id is not set.';
             }
-
             $debugdata = ['sourceunpacked' => $sourceunpacked];
             utils::debug($errmsg, __METHOD__, $debugdata);
         }
-
         return $source;
     }
 
@@ -1300,7 +1732,6 @@ class repository_office365 extends repository {
                 }
             }
         }
-
         return false;
     }
 
@@ -1313,7 +1744,7 @@ class repository_office365 extends repository {
      * @param bool $forcedownload If true (default false), forces download of file rather than view in browser/plugin
      * @param array|null $options additional options affecting the file serving
      */
-    public function send_file($storedfile, $lifetime = null, $filter = 0, $forcedownload = false, ?array $options = null) {
+    public function send_file($storedfile, $lifetime = null , $filter = 0, $forcedownload = false, ?array $options = null) {
         global $USER;
 
         $reference = $this->unpack_reference($storedfile->get_reference());
@@ -1336,7 +1767,6 @@ class repository_office365 extends repository {
                     send_file_not_found();
                     die();
                 }
-
                 if ($doembed === true) {
                     $o365userupn = utils::get_o365_upn($fileuserid);
                     $fileinfo = $sourceclient->get_file_metadata($reference['id'], $o365userupn);
@@ -1368,7 +1798,6 @@ class repository_office365 extends repository {
                 echo get_string('erroro365required', 'repository_office365');
                 die();
             }
-
             if (!empty($sourceclient)) {
                 if (empty($fileurl)) {
                     $errstr = 'Embed was requested, but could not get file info to complete request.';
@@ -1381,7 +1810,6 @@ class repository_office365 extends repository {
                         // Note: exceptions will already be logged in get_embed_url.
                         $embedurl = '';
                     }
-
                     if (!empty($embedurl)) {
                         redirect($embedurl);
                     } else if (!empty($fileurl)) {
@@ -1400,6 +1828,71 @@ class repository_office365 extends repository {
     }
 
     /**
+     * Search for files and folders.
+     *
+     * @param string $searchtext Search query string.
+     * @param int $page Page number (not used, pagination handled via skiptoken).
+     * @return array Search results.
+     */
+    public function search($searchtext, $page = 0) {
+        global $OUTPUT;
+
+        if (empty($searchtext)) {
+            return [];
+        }
+
+        $list = [];
+        $unified = $this->get_unified_apiclient();
+
+        if ($unified === false) {
+            return [
+                'dynload' => true,
+                'nologin' => true,
+                'list' => $list,
+            ];
+        }
+
+        try {
+            $searchresults = $unified->search_files($searchtext);
+            $contents = $searchresults['value'] ?? [];
+
+            // Handle pagination for search results.
+            while (!empty($searchresults['@odata.nextLink'])) {
+                $nextlink = parse_url($searchresults['@odata.nextLink']);
+                if (isset($nextlink['query'])) {
+                    $query = [];
+                    parse_str($nextlink['query'], $query);
+                    if (isset($query['$skiptoken'])) {
+                        $searchresults = $unified->search_files($searchtext, $query['$skiptoken']);
+                        if (!empty($searchresults['value'])) {
+                            $contents = array_merge($contents, $searchresults['value']);
+                        }
+                    } else {
+                        break;
+                    }
+                } else {
+                    break;
+                }
+            }
+
+            // Convert search results to list format.
+            $list = $this->contents_api_response_to_list($contents, '', 'unified', null, false);
+
+        } catch (moodle_exception $e) {
+            utils::debug('Exception when searching files', __METHOD__, [
+                'query' => $searchtext,
+                'message' => $e->getMessage(),
+            ]);
+        }
+
+        return [
+            'dynload' => true,
+            'nologin' => true,
+            'list' => $list,
+        ];
+    }
+
+    /**
      * Validate Admin Settings Moodle form
      *
      * @param moodleform $mform Moodle form (passed by reference)
@@ -1412,7 +1905,6 @@ class repository_office365 extends repository {
         if (utils::is_connected() !== true) {
             array_push($errors, get_string('notconfigured', 'repository_office365', $CFG->wwwroot));
         }
-
         return $errors;
     }
 
@@ -1428,7 +1920,6 @@ class repository_office365 extends repository {
         if (utils::is_connected() !== true) {
             $mform->addElement('static', null, '', get_string('notconfigured', 'repository_office365', $CFG->wwwroot));
         }
-
         parent::type_config_form($mform);
         $mform->addElement('checkbox', 'coursegroup', get_string('coursegroup', 'repository_office365'));
         $mform->setType('coursegroup', PARAM_INT);
@@ -1436,6 +1927,10 @@ class repository_office365 extends repository {
         $mform->setType('onedrivegroup', PARAM_INT);
         $mform->addElement('checkbox', 'trendinggroup', get_string('trendinggroup', 'repository_office365'));
         $mform->setType('trendinggroup', PARAM_INT);
+        $mform->addElement('checkbox', 'sharedwithme', get_string('disablesharedwithme', 'repository_office365'));
+        $mform->setType('sharedwithme', PARAM_INT);
+        $mform->addElement('checkbox', 'bookmarks', get_string('disablebookmarks', 'repository_office365'));
+        $mform->setType('bookmarks', PARAM_INT);
 
         // File linking options.
         $mform->addElement('header', 'filelinking', get_string('filelinkingheader', 'repository_office365'));
@@ -1470,11 +1965,242 @@ class repository_office365 extends repository {
     }
 
      /**
-      * Option names of office365.
-      *
-      * @return array
-      */
+     * Option names of office365.
+     *
+     * @return array
+     */
     public static function get_type_option_names() {
-        return ['coursegroup', 'onedrivegroup', 'trendinggroup', 'disabledirectlink', 'disableanonymousshare', 'pluginname'];
+        return [
+            'coursegroup',
+            'onedrivegroup',
+            'trendinggroup',
+            'sharedwithme',
+            'bookmarks',
+            'disabledirectlink',
+            'disableanonymousshare',
+            'pluginname',
+        ];
+    }
+
+    /**
+     * Add bookmark action items to a folder listing.
+     * This adds bookmark actions for the current folder only.
+     *
+     * @param array $list The current list of items.
+     * @param string $currentpath The current folder path.
+     * @param string $foldertitle The title of the current folder.
+     * @return array The list with bookmark action items added.
+     */
+    protected function add_bookmark_actions_to_list($list, $currentpath, $foldertitle) {
+        global $OUTPUT;
+        
+        // Don't add bookmark actions for special paths.
+        if (empty($currentpath) || $currentpath === '/' || 
+            strpos($currentpath, '/upload/') !== false || 
+            strpos($currentpath, '/bookmarks/') !== false ||
+            strpos($currentpath, '/bookmark-action/') !== false) {
+            return $list;
+        }
+        
+        $bookmarksdisabled = get_config('office365', 'bookmarks');
+        if (!empty($bookmarksdisabled)) {
+            return $list;
+        }
+        
+        $isbookmarked = $this->is_bookmarked($currentpath);
+        
+        // Create bookmark action item that uses special paths.
+        if ($isbookmarked) {
+            // Add "Remove bookmark" action using special path.
+            $actionitem = [
+                'title' => '★ ' . get_string('removebookmark', 'repository_office365'),
+                'path' => '/bookmark-action/remove/' . base64_encode($currentpath),
+                'thumbnail' => $OUTPUT->pix_url('i/star')->out(false),
+                'children' => [],
+            ];
+        } else {
+            // Add "Bookmark this folder" action using special path.
+            $actionitem = [
+                'title' => '☆ ' . get_string('addbookmark', 'repository_office365'),
+                'path' => '/bookmark-action/add/' . base64_encode($currentpath) . '/' . base64_encode($foldertitle),
+                'thumbnail' => $OUTPUT->pix_url('i/star-o')->out(false),
+                'children' => [],
+            ];
+        }
+        
+        // Insert at the beginning of the list (after upload if present).
+        if (!empty($list) && isset($list[0]['path']) && strpos($list[0]['path'], '/upload/') !== false) {
+            // Insert after upload item.
+            array_splice($list, 1, 0, [$actionitem]);
+        } else {
+            // Insert at the beginning.
+            array_unshift($list, $actionitem);
+        }
+        
+        return $list;
+    }
+
+    /**
+     * Get user's bookmarks.
+     *
+     * @return array Array of bookmarks with path, title, and type.
+     */
+    public function get_bookmarks() {
+        global $USER;
+        $bookmarks = get_user_preferences('repository_office365_bookmarks', '', $USER->id);
+        if (empty($bookmarks)) {
+            return [];
+        }
+        return json_decode($bookmarks, true) ?: [];
+    }
+
+    /**
+     * Save user's bookmarks.
+     *
+     * @param array $bookmarks Array of bookmarks.
+     * @return bool Success status.
+     */
+    protected function save_bookmarks($bookmarks) {
+        global $USER;
+        $json = json_encode($bookmarks);
+        return set_user_preference('repository_office365_bookmarks', $json, $USER->id);
+    }
+
+    /**
+     * Add a bookmark for the current path.
+     *
+     * @param string $path The path to bookmark.
+     * @param string $title The display title for the bookmark.
+     * @return bool Success status.
+     */
+    public function add_bookmark($path, $title) {
+        $bookmarks = $this->get_bookmarks();
+        
+        // Check if bookmark already exists.
+        foreach ($bookmarks as $bookmark) {
+            if ($bookmark['path'] === $path) {
+                return true; // Already bookmarked.
+            }
+        }
+        
+        // Add new bookmark.
+        $bookmarks[] = [
+            'path' => $path,
+            'title' => $title,
+            'timestamp' => time(),
+        ];
+        
+        return $this->save_bookmarks($bookmarks);
+    }
+
+    /**
+     * Remove a bookmark.
+     *
+     * @param string $path The path of the bookmark to remove.
+     * @return bool Success status.
+     */
+    public function remove_bookmark($path) {
+        $bookmarks = $this->get_bookmarks();
+        $newbookmarks = [];
+        
+        foreach ($bookmarks as $bookmark) {
+            if ($bookmark['path'] !== $path) {
+                $newbookmarks[] = $bookmark;
+            }
+        }
+        
+        return $this->save_bookmarks($newbookmarks);
+    }
+
+    /**
+     * Check if a path is bookmarked.
+     *
+     * @param string $path The path to check.
+     * @return bool True if bookmarked, false otherwise.
+     */
+    protected function is_bookmarked($path) {
+        $bookmarks = $this->get_bookmarks();
+        foreach ($bookmarks as $bookmark) {
+            if ($bookmark['path'] === $path) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Track recently visited path.
+     *
+     * @param string $path The path that was visited.
+     * @param string $title The display title for the path.
+     */
+    protected function track_recent_path($path, $title) {
+        global $USER;
+        
+        // Don't track special paths.
+        if ($path === '/' || strpos($path, '/upload/') !== false || strpos($path, '/bookmarks/') !== false) {
+            return;
+        }
+        
+        $recent = get_user_preferences('repository_office365_recent', '', $USER->id);
+        $recentpaths = empty($recent) ? [] : json_decode($recent, true);
+        if (!is_array($recentpaths)) {
+            $recentpaths = [];
+        }
+        
+        // Remove if already exists (to update timestamp).
+        $recentpaths = array_filter($recentpaths, function($item) use ($path) {
+            return $item['path'] !== $path;
+        });
+        
+        // Add to front.
+        array_unshift($recentpaths, [
+            'path' => $path,
+            'title' => $title,
+            'timestamp' => time(),
+        ]);
+        
+        // Keep only last 20.
+        $recentpaths = array_slice($recentpaths, 0, 20);
+        
+        set_user_preference('repository_office365_recent', json_encode($recentpaths), $USER->id);
+    }
+
+    /**
+     * Get listing for bookmarked folders.
+     *
+     * @return array List of $list array and $breadcrumb array.
+     */
+    protected function get_listing_bookmarks() {
+        global $OUTPUT;
+        
+        $list = [];
+        $breadcrumb = [
+            ['name' => $this->name, 'path' => '/'],
+            ['name' => get_string('bookmarks', 'repository_office365'), 'path' => '/bookmarks/'],
+        ];
+        
+        $bookmarks = $this->get_bookmarks();
+        
+        if (empty($bookmarks)) {
+            // No bookmarks, return empty list.
+            return [$list, $breadcrumb];
+        }
+        
+        // Sort bookmarks by timestamp (most recent first).
+        usort($bookmarks, function($a, $b) {
+            return $b['timestamp'] - $a['timestamp'];
+        });
+        
+        foreach ($bookmarks as $bookmark) {
+            $list[] = [
+                'title' => $bookmark['title'],
+                'path' => $bookmark['path'],
+                'thumbnail' => $OUTPUT->pix_url(file_folder_icon(90))->out(false),
+                'children' => [],
+            ];
+        }
+        
+        return [$list, $breadcrumb];
     }
 }
